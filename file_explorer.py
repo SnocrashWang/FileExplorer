@@ -3,6 +3,7 @@ import curses
 import curses.ascii
 import json
 import math
+import re
 
 
 def list_files(stdscr, current_path, selected):
@@ -51,10 +52,37 @@ def split_str(s, n):
     return result
 
 
-def display_jsonl(stdscr, jsonl_path):
-    stdscr.clear()
-    stdscr.addstr(0, 0, f"Viewing JSONL file: {jsonl_path}")
+def add_colored_json(stdscr, row, col, str):
+    pattern = r'\"[^\\]*?\":'   # 正则表达式，匹配 json 中的键名
+    result = []                 # 初始化结果列表
+    last_index = 0              # 记录上一个匹配的结束位置
 
+    # 查找所有匹配的子串
+    for match in re.finditer(pattern, str):
+        # 添加不满足条件的子串
+        if last_index < match.start():
+            non_match_part = str[last_index:match.start()]
+            result.append((non_match_part, False))
+        # 添加满足条件的子串
+        match_part = match.group()
+        result.append((match_part, True))
+        last_index = match.end()
+    # 添加最后一个不满足条件的子串（如果有）
+    if last_index < len(str):
+        non_match_part = str[last_index:]
+        result.append((non_match_part, False))
+
+    for i, item in enumerate(result):
+        if i == 0:
+            stdscr.addstr(row, col, item[0])
+        else:
+            if item[1]:
+                stdscr.addstr(item[0], curses.color_pair(2))
+            else:
+                stdscr.addstr(item[0])
+
+
+def display_jsonl(stdscr, jsonl_path):
     with open(jsonl_path, 'r', encoding='utf-8') as f:
         json_lines = f.readlines()
 
@@ -64,9 +92,10 @@ def display_jsonl(stdscr, jsonl_path):
     key = ''
 
     while True:
+        rows, cols = stdscr.getmaxyx()
         stdscr.clear()
-        stdscr.addstr(0, 0, f"JSONL file: {jsonl_path}")
-        stdscr.addstr(1, 0, f"Current line: {selected + 1} / {len(json_lines)}")
+        stdscr.addstr(0, 0, f"JSONL file: {jsonl_path[:rows-12]}", curses.color_pair(3))
+        stdscr.addstr(1, 0, f"Current line: {selected + 1} / {len(json_lines)}", curses.color_pair(3))
 
         try:
             json_content = json.loads(json_lines[selected])
@@ -77,23 +106,24 @@ def display_jsonl(stdscr, jsonl_path):
         except IndexError:
             json_str = "Error: Empty file."
 
-        rows, cols = stdscr.getmaxyx()
         json_str_lines = json_str.split('\n')
         row_idx = 2
         try:
             for i, line in enumerate(json_str_lines[start_line:]):
                 lines = split_str(line, cols)
                 for split_line in lines:
-                    if row_idx < rows - 1:
-                        stdscr.addstr(row_idx, 0, split_line)
+                    if row_idx < rows - 2:
+                        # stdscr.addstr(row_idx, 0, split_line)
+                        add_colored_json(stdscr, row_idx, 0, split_line)
                         row_idx += 1
-        except:
-            stdscr.addstr(2, 0, "Error: Invalid JSON content.")
+        except Exception as e:
+            stdscr.addstr(2, 0, str(e))
+            # stdscr.addstr(2, 0, "Error: Invalid JSON content.")
 
         # 显示提示
-        stdscr.addstr(rows - 1, 0, "[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch, ESC to quit.")
+        stdscr.addstr(rows - 1, 0, "[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch, ESC to quit.", curses.color_pair(3))
         # 显示行号输入
-        stdscr.addstr(rows - 2, 0, f"[...] Press NUMBERs to choose a line, ENTER to jump: {jump_line_str}")
+        stdscr.addstr(rows - 2, 0, f"[...] Press NUMBERs to choose a line, ENTER to jump: {jump_line_str}", curses.color_pair(3))
 
         stdscr.refresh()
 
@@ -128,6 +158,13 @@ def display_jsonl(stdscr, jsonl_path):
 
 
 def file_explorer(stdscr):
+    # 初始化颜色
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)    # 红色
+    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)  # 绿色
+    curses.init_pair(3, curses.COLOR_BLUE, curses.COLOR_BLACK)   # 蓝色
+    curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK) # 黄色
+
     curses.curs_set(0)
     current_path = os.getcwd()
     stdscr.encoding = 'utf-8'
