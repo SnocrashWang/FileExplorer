@@ -29,7 +29,7 @@ def list_files(stdscr, current_path, selected):
         stdscr.addstr(idx + 2, 0, path, mode_select)
 
     stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page)}, {selected}", curses.A_BOLD)
-    stdscr.addstr(rows - 1, 0, "[...] Press ESC to quit")
+    stdscr.addstr(rows - 1, 0, "[...] Press ESC to quit", curses.A_BOLD)
     stdscr.refresh()
     return paths
 
@@ -94,8 +94,8 @@ def display_jsonl(stdscr, jsonl_path):
     while True:
         rows, cols = stdscr.getmaxyx()
         stdscr.clear()
-        stdscr.addstr(0, 0, f"JSONL file: {jsonl_path[:rows-12]}", curses.color_pair(3))
-        stdscr.addstr(1, 0, f"Current line: {selected + 1} / {len(json_lines)}", curses.color_pair(3))
+        stdscr.addstr(0, 0, f"JSONL file: {jsonl_path[:cols-12]}", curses.A_BOLD)
+        stdscr.addstr(1, 0, f"Current line: {selected + 1} / {len(json_lines)}", curses.A_BOLD)
 
         try:
             json_content = json.loads(json_lines[selected])
@@ -121,9 +121,9 @@ def display_jsonl(stdscr, jsonl_path):
             # stdscr.addstr(2, 0, "Error: Invalid JSON content.")
 
         # 显示提示
-        stdscr.addstr(rows - 1, 0, "[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch, ESC to quit.", curses.color_pair(3))
+        stdscr.addstr(rows - 1, 0, "[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch, ESC to quit.", curses.A_BOLD)
         # 显示行号输入
-        stdscr.addstr(rows - 2, 0, f"[...] Press NUMBERs to choose a line, ENTER to jump: {jump_line_str}", curses.color_pair(3))
+        stdscr.addstr(rows - 2, 0, f"[...] Press NUMBERs to choose a line, ENTER to jump: {jump_line_str}", curses.A_BOLD)
 
         stdscr.refresh()
 
@@ -135,9 +135,9 @@ def display_jsonl(stdscr, jsonl_path):
             selected = max(selected - 1, 0)
             start_line = 0
         elif key == curses.KEY_DOWN or key == 456:
-            start_line = min(start_line + 1, len(json_str_lines) - 1)
+            start_line = (start_line + 1) % len(json_str_lines)
         elif key == curses.KEY_UP or key == 450:
-            start_line = max(start_line - 1, 0)
+            start_line = (start_line - 1) % len(json_str_lines)
         elif key == 27:  # ESC
             stdscr.clear()
             break
