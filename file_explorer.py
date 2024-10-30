@@ -60,11 +60,13 @@ def display_jsonl(stdscr, jsonl_path):
 
     selected = 0
     start_line = 0
-    down_str_tip = "[...] Press UP/DOWN to scroll, LFET/RIGHT to switch, ESC to quit"
+    jump_line_str = ''  # 用于记录输入行号
+    key = ''
+
     while True:
         stdscr.clear()
         stdscr.addstr(0, 0, f"JSONL file: {jsonl_path}")
-        stdscr.addstr(1, 0, f"Current line: {selected + 1}")
+        stdscr.addstr(1, 0, f"Current line: {selected + 1} / {len(json_lines)}")
 
         try:
             json_content = json.loads(json_lines[selected])
@@ -72,6 +74,8 @@ def display_jsonl(stdscr, jsonl_path):
             json_str = json_str.replace("\\n", '\n')
         except json.JSONDecodeError:
             json_str = "Error: Invalid JSON content."
+        except IndexError:
+            json_str = "Error: Empty file."
 
         rows, cols = stdscr.getmaxyx()
         json_str_lines = json_str.split('\n')
@@ -86,13 +90,16 @@ def display_jsonl(stdscr, jsonl_path):
         except:
             stdscr.addstr(2, 0, "Error: Invalid JSON content.")
 
-        stdscr.addstr(rows - 1, 0, down_str_tip)
+        # 显示提示
+        stdscr.addstr(rows - 1, 0, "[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch, ESC to quit.")
+        # 显示行号输入
+        stdscr.addstr(rows - 2, 0, f"[...] Press NUMBERs to choose a line, ENTER to jump: {jump_line_str}")
 
         stdscr.refresh()
 
         key = stdscr.getch()
         if key == curses.KEY_RIGHT or key == 454:
-            selected = min(selected + 1, len(json_lines) - 1)
+            selected = min(selected + 1, max(len(json_lines) - 1, 0))
             start_line = 0
         elif key == curses.KEY_LEFT or key == 452:
             selected = max(selected - 1, 0)
@@ -104,8 +111,19 @@ def display_jsonl(stdscr, jsonl_path):
         elif key == 27:  # ESC
             stdscr.clear()
             break
-        # stdscr.addstr(rows - 1, 0, "[...] Press UP/DOWN to scroll, LFET/RIGHT to switch, ESC to quit" + str(key))
-        # stdscr.refresh()
+        elif 48 <= key <= 57:  # 数字键（0-9）
+            jump_line_str += chr(key)  # 添加输入
+        elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
+            jump_line_str = jump_line_str[:-1]  # 删除最后一个字符
+        elif key == ord('\n'):  # 回车
+            try:
+                target_line = int(jump_line_str) - 1  # 转换为索引（从0开始）
+                if 0 <= target_line < len(json_lines):
+                    selected = target_line
+                    start_line = 0
+                jump_line_str = ''  # 清空输入
+            except ValueError:
+                pass  # 无效输入时不做任何操作
 
 
 
