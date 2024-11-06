@@ -5,6 +5,9 @@ import json
 import math
 import re
 
+SEARCH_HIGHLIGHT = 6
+KEY_HIGHLIGHT = 3
+
 
 def list_files(stdscr, current_path, selected_file):
     stdscr.clear()
@@ -73,16 +76,29 @@ def add_colored_json(stdscr, row, col, str, search=None):
             result_list.append((non_match_part, c))
         return result_list
     
-    item_list = split_sub_str(r'\"[^\\]*?\":', (str, 1), 3)
+    item_list = split_sub_str(r'\"[^\\]*?\":', (str, 1), KEY_HIGHLIGHT)
     if search:
+        item_list_new = []
         for i, item in enumerate(item_list):
-            item_list = item_list[:i] + split_sub_str(search, item, 5) + item_list[i+1:]
+            item_list_new += split_sub_str(search, item, SEARCH_HIGHLIGHT)
+        item_list = item_list_new
 
     for i, item in enumerate(item_list):
         if i == 0:
             stdscr.addstr(row, col, item[0])
         else:
             stdscr.addstr(item[0], curses.color_pair(item[1]))
+
+
+def search_in_list(string_list, target_string):
+    if not target_string:
+        return 0
+    # 遍历列表，找到目标字符串第一次出现的位置
+    for index, string in enumerate(string_list):
+        if target_string in string:
+            return index  # 返回字符串所在的位置（第几个字符串）
+    # 如果目标字符串未出现在任何字符串中
+    return -1
 
 
 def display_jsonl(stdscr, jsonl_path):
@@ -122,19 +138,19 @@ def display_jsonl(stdscr, jsonl_path):
                 lines.extend(split_str(line, cols))
             for split_line in lines[start_line:]:
                 if row_idx < rows - 3:
-                    # stdscr.addstr(row_idx, 0, split_line)
                     add_colored_json(stdscr, row_idx, 0, split_line, search=search_str)
                     row_idx += 1
+            next_search_line = start_line + search_in_list(lines[start_line+1:], search_str) + 1
         except Exception as e:
             stdscr.addstr(2, 0, str(e))
             # stdscr.addstr(2, 0, "Error: Invalid JSON content.")
 
         # 显示搜索输入
-        stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
+        stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
         # 显示行号输入
         stdscr.addstr(rows - 2, 0, f"[...] Type NUMBERs to choose a line, ENTER to jump: {jump_line_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "JUMP" else curses.A_BOLD)
         # 显示提示
-        stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch line, TAB to switch mode, ESC to quit."[:cols-1], curses.A_BOLD)
+        stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch line, TAB to switch mode, ESC to quit."[:cols-1] + str(next_search_line), curses.A_BOLD)
 
         stdscr.refresh()
 
@@ -162,6 +178,8 @@ def display_jsonl(stdscr, jsonl_path):
                 search_str += chr(key)  # 添加输入
             elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
                 search_str = search_str[:-1]  # 删除最后一个字符
+            elif key == ord('\n'):  # 回车
+                start_line = next_search_line
         elif mode == "JUMP":
             if 48 <= key <= 57:  # 数字键（0-9）
                 jump_line_str += chr(key)  # 添加输入
@@ -186,7 +204,8 @@ def file_explorer(stdscr):
     curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)    # 红色
     curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)  # 绿色
     curses.init_pair(4, curses.COLOR_BLUE, curses.COLOR_BLACK)   # 蓝色
-    curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_YELLOW) # 黄色
+    curses.init_pair(5, curses.COLOR_YELLOW, curses.COLOR_BLACK) # 黄色
+    curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_YELLOW) # 警告
 
     curses.curs_set(0)
     current_path = os.getcwd()
