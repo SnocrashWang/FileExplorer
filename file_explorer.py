@@ -94,11 +94,42 @@ def search_in_list(string_list, target_string):
     if not target_string:
         return 0
     # 遍历列表，找到目标字符串第一次出现的位置
-    for index, string in enumerate(string_list):
+    for index, string in enumerate(string_list, start=1):
         if target_string in string:
             return index  # 返回字符串所在的位置（第几个字符串）
     # 如果目标字符串未出现在任何字符串中
     return -1
+
+
+def load_json_data(json_lines, selected_data, cols):
+    try:
+        json_content = json.loads(json_lines[selected_data])
+        json_str = json.dumps(json_content, ensure_ascii=False, indent=2)
+        json_str = json_str.replace("\\n", '\n')
+    except json.JSONDecodeError:
+        json_str = "Error: Invalid JSON content."
+    except IndexError:
+        json_str = "Error: Empty file."
+
+    json_str_lines = json_str.split('\n')
+    lines = []
+    for line in json_str_lines:
+        lines.extend(split_str(line, cols))
+    return lines
+
+
+def search_next(json_lines, selected_data, start_line, search_str, rows, cols):
+    # while True:
+    lines = load_json_data(json_lines, selected_data, cols)
+    line_diff = search_in_list(lines[start_line+1:], search_str)
+    if line_diff != -1:
+        next_line = start_line + line_diff
+        # break
+
+        # selected_data += 1
+        # start_line = 0
+
+    return selected_data, next_line
 
 
 def display_jsonl(stdscr, jsonl_path):
@@ -114,43 +145,28 @@ def display_jsonl(stdscr, jsonl_path):
     mode_list = ["SEARCH", "JUMP"]
     mode = mode_list[selected_mode]
 
-
     while True:
         rows, cols = stdscr.getmaxyx()
         stdscr.clear()
-        stdscr.addstr(0, 0, f"JSONL file: {jsonl_path[:cols-12]}", curses.A_BOLD)
-        stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
 
+        # 显示 json 内容
         try:
-            json_content = json.loads(json_lines[selected_data])
-            json_str = json.dumps(json_content, ensure_ascii=False, indent=2)
-            json_str = json_str.replace("\\n", '\n')
-        except json.JSONDecodeError:
-            json_str = "Error: Invalid JSON content."
-        except IndexError:
-            json_str = "Error: Empty file."
-
-        json_str_lines = json_str.split('\n')
-        row_idx = 2
-        try:
-            lines = []
-            for line in json_str_lines:
-                lines.extend(split_str(line, cols))
-            for split_line in lines[start_line:]:
-                if row_idx < rows - 3:
-                    add_colored_json(stdscr, row_idx, 0, split_line, search=search_str)
-                    row_idx += 1
-            next_search_line = start_line + search_in_list(lines[start_line+1:], search_str) + 1
+            lines = load_json_data(json_lines, selected_data, cols)
+            for r, split_line in enumerate(lines[start_line:start_line+rows-5], start=2):
+                add_colored_json(stdscr, r, 0, split_line, search=search_str)
         except Exception as e:
             stdscr.addstr(2, 0, str(e))
-            # stdscr.addstr(2, 0, "Error: Invalid JSON content.")
 
+        # 显示文件名
+        stdscr.addstr(0, 0, f"JSONL file: {jsonl_path[:cols-12]}", curses.A_BOLD)
+        # 显示数据编号
+        stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
         # 显示搜索输入
         stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
         # 显示行号输入
         stdscr.addstr(rows - 2, 0, f"[...] Type NUMBERs to choose a line, ENTER to jump: {jump_line_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "JUMP" else curses.A_BOLD)
         # 显示提示
-        stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch line, TAB to switch mode, ESC to quit."[:cols-1] + str(next_search_line), curses.A_BOLD)
+        stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch line, TAB to switch mode, ESC to quit."[:cols-1], curses.A_BOLD)
 
         stdscr.refresh()
 
@@ -162,16 +178,15 @@ def display_jsonl(stdscr, jsonl_path):
             selected_data = max(selected_data - 1, 0)
             start_line = 0
         elif key == curses.KEY_DOWN or key == 456:
-            start_line = (start_line + 1) % max(len(lines) - (rows - 5), 1)
+            start_line = (start_line + 1) % max(len(lines) - (rows - 6), 1)
         elif key == curses.KEY_UP or key == 450:
-            start_line = (start_line - 1) % max(len(lines) - (rows - 5), 1)
+            start_line = (start_line - 1) % max(len(lines) - (rows - 6), 1)
         elif key == 27:  # ESC
             stdscr.clear()
             break
         elif key == curses.KEY_BTAB or key == 9:
             selected_mode = (selected_mode + 1) % len(mode_list)
             mode = mode_list[selected_mode]
-        
 
         if mode == "SEARCH":
             if 32 <= key <= 126:  # 所有ascii可显示字符
@@ -179,7 +194,12 @@ def display_jsonl(stdscr, jsonl_path):
             elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
                 search_str = search_str[:-1]  # 删除最后一个字符
             elif key == ord('\n'):  # 回车
-                start_line = next_search_line
+                try:
+                    stdscr.addstr(rows - 1, cols - 8, f"LOADING", curses.A_BOLD)
+                    stdscr.refresh()
+                    selected_data, start_line = search_next(json_lines, selected_data, start_line, search_str, rows, cols)
+                except:
+                    pass
         elif mode == "JUMP":
             if 48 <= key <= 57:  # 数字键（0-9）
                 jump_line_str += chr(key)  # 添加输入
