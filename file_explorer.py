@@ -80,7 +80,7 @@ def add_colored_json(stdscr, row, col, str, search=None):
     if search:
         item_list_new = []
         for i, item in enumerate(item_list):
-            item_list_new += split_sub_str(search, item, SEARCH_HIGHLIGHT)
+            item_list_new += split_sub_str(re.escape(search), item, SEARCH_HIGHLIGHT)
         item_list = item_list_new
 
     for i, item in enumerate(item_list):
@@ -119,17 +119,16 @@ def load_json_data(json_lines, selected_data, cols):
 
 
 def search_next(json_lines, selected_data, start_line, search_str, rows, cols):
-    # while True:
-    lines = load_json_data(json_lines, selected_data, cols)
-    line_diff = search_in_list(lines[start_line+1:], search_str)
-    if line_diff != -1:
-        next_line = start_line + line_diff
-        # break
+    while selected_data < len(json_lines):
+        lines = load_json_data(json_lines, selected_data, cols)
+        line_diff = search_in_list(lines[start_line+1:], search_str)
+        if line_diff != -1:
+            next_line = start_line + line_diff
+            return selected_data, next_line
 
-        # selected_data += 1
-        # start_line = 0
-
-    return selected_data, next_line
+        selected_data += 1
+        start_line = 0
+    return 0, 0
 
 
 def display_jsonl(stdscr, jsonl_path):
@@ -214,7 +213,6 @@ def display_jsonl(stdscr, jsonl_path):
                     jump_line_str = ''  # 清空输入
                 except ValueError:
                     pass  # 无效输入时不做任何操作
-
 
 
 def file_explorer(stdscr):
