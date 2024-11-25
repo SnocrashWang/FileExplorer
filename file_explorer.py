@@ -85,7 +85,7 @@ def add_colored_json(stdscr, row, col, str, search=None):
 
     for i, item in enumerate(item_list):
         if i == 0:
-            stdscr.addstr(row, col, item[0])
+            stdscr.addstr(row, col, item[0], curses.color_pair(item[1]))
         else:
             stdscr.addstr(item[0], curses.color_pair(item[1]))
 
@@ -131,10 +131,33 @@ def search_next(json_lines, selected_data, start_line, search_str, rows, cols):
     return 0, 0
 
 
-def display_jsonl(stdscr, jsonl_path):
-    with open(jsonl_path, 'r', encoding='utf-8') as f:
+def read_jsonl(path):
+    with open(path, 'r', encoding='utf-8') as f:
         json_lines = f.readlines()
+    return json_lines
 
+
+def read_json(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+        if isinstance(json_data, list):
+            json_lines = [json.dumps(d) for d in json_data]
+        else:
+            json_lines = [json.dumps(json_data)]
+        return json_lines
+    except Exception as e:
+        return [str(e)]
+            
+
+
+def display_data(stdscr, path):
+    if path.endswith('.jsonl'):
+        json_lines = read_jsonl(path)
+    elif path.endswith('.json'):
+        json_lines = read_json(path)
+    else:
+        return -1
     selected_data = 0
     selected_mode = 0
     start_line = 0
@@ -157,7 +180,7 @@ def display_jsonl(stdscr, jsonl_path):
             stdscr.addstr(2, 0, str(e))
 
         # 显示文件名
-        stdscr.addstr(0, 0, f"JSONL file: {jsonl_path[:cols-12]}", curses.A_BOLD)
+        stdscr.addstr(0, 0, f"JSONL file: {path[:cols-12]}", curses.A_BOLD)
         # 显示数据编号
         stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
         # 显示搜索输入
@@ -242,10 +265,10 @@ def file_explorer(stdscr):
             if os.path.isdir(new_path):
                 current_path = new_path
             elif os.path.isfile(new_path):
-                if new_path.endswith('.jsonl'):
-                    display_jsonl(stdscr, new_path)
+                if new_path.endswith('.jsonl') or new_path.endswith('.json'):
+                    display_data(stdscr, new_path)
                     files = list_files(stdscr, current_path, selected_file)
-            selected_file = 0
+            # selected_file = 0
         elif key == 27:
             break
 
