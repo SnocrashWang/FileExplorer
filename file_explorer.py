@@ -32,7 +32,7 @@ def list_files(stdscr, current_path, selected_file):
         stdscr.addstr(idx + 2, 0, path, mode_select)
 
     stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page)}, {selected_file}", curses.A_BOLD)
-    stdscr.addstr(rows - 1, 0, "[...] Both JSONL and JSON files are supported. Press ESC to quit.", curses.A_BOLD)
+    stdscr.addstr(rows - 1, 0, "[...] Both JSONL and JSON files are supported. Press ESC to quit."[:cols-1], curses.A_BOLD)
     stdscr.refresh()
     return paths
 
@@ -105,7 +105,7 @@ def load_json_data(json_lines, selected_data, cols):
     try:
         json_content = json.loads(json_lines[selected_data])
         json_str = json.dumps(json_content, ensure_ascii=False, indent=2)
-        json_str = json_str.replace("\\n", '\n')
+        json_str = re.sub(r'(?<!\\)\\n', '\n', json_str)
     except json.JSONDecodeError:
         json_str = "Error: Invalid JSON content."
     except IndexError:
@@ -202,9 +202,15 @@ def display_data(stdscr, path):
                 selected_data = max(selected_data - 1, 0)
                 start_line = 0
             elif key == curses.KEY_DOWN or key == 456:
-                start_line = (start_line + 1) % max(len(lines) - (rows - 6), 1)
+                if start_line >= len(lines) - (rows - 6):
+                    start_line = len(lines) - (rows - 6) - 1
+                else:
+                    start_line = (start_line + 1) % max(len(lines) - (rows - 6), 1)
             elif key == curses.KEY_UP or key == 450:
-                start_line = (start_line - 1) % max(len(lines) - (rows - 6), 1)
+                if start_line >= len(lines) - (rows - 6):
+                    start_line = len(lines) - (rows - 6) - 1
+                else:
+                    start_line = (start_line - 1) % max(len(lines) - (rows - 6), 1)
             elif key == 27:  # ESC
                 stdscr.clear()
                 return 0
@@ -255,28 +261,46 @@ def file_explorer(stdscr):
     curses.curs_set(0)
     current_path = os.getcwd()
     stdscr.encoding = 'utf-8'
-    selected_file = 0
-    files = list_files(stdscr, current_path, selected_file)
+    selected_file = [0]
+    files = list_files(stdscr, current_path, selected_file[-1])
 
     while True:
         key = stdscr.getch()
-        if (key == curses.KEY_UP or key == 450):
-            selected_file = (selected_file - 1) % len(files)
+        rows, cols = stdscr.getmaxyx()
+
+        if key == curses.KEY_RIGHT or key == 454:
+            selected_file[-1] = (selected_file[-1] + (rows - 3)) % len(files)
+        elif key == curses.KEY_LEFT or key == 452:
+            selected_file[-1] = (selected_file[-1] - (rows - 3)) % len(files)
+        elif (key == curses.KEY_UP or key == 450):
+            selected_file[-1] = (selected_file[-1] - 1) % len(files)
         elif (key == curses.KEY_DOWN or key == 456):
-            selected_file = (selected_file + 1) % len(files)
+            selected_file[-1] = (selected_file[-1] + 1) % len(files)
         elif key == ord('\n'):
-            new_path = os.path.normpath(os.path.join(current_path, files[selected_file]))
+            new_path = os.path.normpath(os.path.join(current_path, files[selected_file[-1]]))
             if os.path.isdir(new_path):
                 current_path = new_path
-                selected_file = 0
+                if files[selected_file[-1]] == "../":
+                    if len(selected_file) > 1:
+                        selected_file.pop()
+                    else:
+                        selected_file = [0]
+                else:
+                    selected_file.append(0)
             elif os.path.isfile(new_path):
                 if new_path.endswith('.jsonl') or new_path.endswith('.json'):
                     display_data(stdscr, new_path)
-                    files = list_files(stdscr, current_path, selected_file)
+                    files = list_files(stdscr, current_path, selected_file[-1])
+        elif key == curses.KEY_BACKSPACE or key == 8:
+            current_path = os.path.normpath(os.path.join(current_path, "../"))
+            if len(selected_file) > 1:
+                selected_file.pop()
+            else:
+                selected_file = [0]
         elif key == 27:
             exit()
 
-        files = list_files(stdscr, current_path, selected_file)
+        files = list_files(stdscr, current_path, selected_file[-1])
         stdscr.refresh()
 
 
