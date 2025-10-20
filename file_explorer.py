@@ -9,10 +9,11 @@ SEARCH_HIGHLIGHT = 6
 KEY_HIGHLIGHT = 3
 
 
-def list_files(stdscr, current_path, selected_file):
+def list_files(stdscr, current_path, selected_file, search_str=""):
     stdscr.clear()
     rows, cols = stdscr.getmaxyx()
     stdscr.addstr(0, 0, f"Current directory: {current_path}\n"[:cols], curses.A_BOLD)
+    
     paths = os.listdir(current_path)
     paths.sort()
 
@@ -20,19 +21,82 @@ def list_files(stdscr, current_path, selected_file):
     folders = [f + '/' for f in paths if os.path.isdir(os.path.join(current_path, f))]
     files = [f for f in paths if os.path.isfile(os.path.join(current_path, f))]
     paths = ['../'] + folders + files
+    
+    # 如果有搜索词，筛选路径
+    original_paths = paths.copy()  # 保存原始路径用于显示
+    if search_str:
+        filtered_paths = []
+        for path in paths:
+            if search_str.lower() in path.lower():
+                filtered_paths.append(path)
+        paths = filtered_paths
+        # 如果筛选后没有文件，保持选中位置为0
+        if not paths:
+            paths = []
+            selected_file = 0
 
     # 显示所有路径
     row_per_page = rows - 3
-    page = selected_file // row_per_page
+    page = selected_file // row_per_page if paths else 0
     paths_in_page = paths[page * row_per_page : min((page + 1) * row_per_page, len(paths))]
+    
     for idx, path in enumerate(paths_in_page):
-        path = path[:cols]
+        display_path = path[:cols]
         mode_select = curses.A_REVERSE if idx == selected_file % row_per_page else curses.A_NORMAL
-        mode_folder = curses.A_UNDERLINE if os.path.isdir(os.path.join(current_path, path)) else curses.A_NORMAL
-        stdscr.addstr(idx + 2, 0, path, mode_select)
+        mode_folder = curses.A_UNDERLINE if path.endswith('/') else curses.A_NORMAL
+        
+        # 如果有搜索词，高亮匹配的部分
+        if search_str and search_str.lower() in path.lower():
+            # 找到所有匹配的位置
+            start_positions = []
+            lower_path = path.lower()
+            lower_search = search_str.lower()
+            pos = lower_path.find(lower_search)
+            while pos != -1:
+                start_positions.append(pos)
+                pos = lower_path.find(lower_search, pos + 1)
+            
+            # 分段显示并高亮
+            current_col = 0
+            last_pos = 0
+            for start_pos in start_positions:
+                end_pos = start_pos + len(search_str)
+                # 显示非高亮部分
+                if last_pos < start_pos:
+                    normal_part = path[last_pos:start_pos]
+                    if current_col + len(normal_part) < cols:
+                        stdscr.addstr(idx + 2, current_col, normal_part, mode_select)
+                        current_col += len(normal_part)
+                
+                # 显示高亮部分
+                highlight_part = path[start_pos:end_pos]
+                if current_col + len(highlight_part) < cols:
+                    stdscr.addstr(idx + 2, current_col, highlight_part, curses.color_pair(SEARCH_HIGHLIGHT))
+                    current_col += len(highlight_part)
+                
+                last_pos = end_pos
+            
+            # 显示剩余部分
+            if last_pos < len(path):
+                remaining_part = path[last_pos:]
+                if current_col + len(remaining_part) < cols:
+                    stdscr.addstr(idx + 2, current_col, remaining_part, mode_select)
+        else:
+            # 没有搜索词时的正常显示
+            stdscr.addstr(idx + 2, 0, display_path, mode_select)
 
-    stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page)}, {selected_file}", curses.A_BOLD)
-    stdscr.addstr(rows - 1, 0, "[...] Both JSONL and JSON files are supported. Press ESC to quit."[:cols-1], curses.A_BOLD)
+    # 显示页面信息和搜索结果统计
+    if search_str:
+        stdscr.addstr(1, 0, f"Page: {page + 1}/{math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}, Found {len(paths)}/{len(original_paths)} items"[:cols], curses.A_BOLD)
+    else:
+        stdscr.addstr(1, 0, f"Page: {page + 1}/{math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
+    
+    # 显示提示信息
+    if search_str:
+        stdscr.addstr(rows - 1, 0, f"[...] Searching: '{search_str}'"[:cols-1], curses.A_BOLD)
+    else:
+        stdscr.addstr(rows - 1, 0, "[...] Supported file extensions: jsonl, json, txt. Type to search. Press ESC to quit."[:cols-1], curses.A_BOLD)
+    
     stdscr.refresh()
     return paths
 
@@ -148,7 +212,15 @@ def read_json(path):
         return json_lines
     except Exception as e:
         return [str(e)]
-            
+
+
+def read_txt(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            json_data = [l.split('\t')[1] for l in f.readlines()]
+        return json_data
+    except Exception as e:
+        return [str(e)]
 
 
 def display_data(stdscr, path):
@@ -157,6 +229,8 @@ def display_data(stdscr, path):
             json_lines = read_jsonl(path)
         elif path.endswith('.json'):
             json_lines = read_json(path)
+        elif path.endswith('.txt'):
+            json_lines = read_txt(path)
         else:
             return -1
         selected_data = 0
@@ -183,7 +257,7 @@ def display_data(stdscr, path):
             # 显示文件名
             stdscr.addstr(0, 0, f"JSONL file: {path[:cols-12]}", curses.A_BOLD)
             # 显示数据编号
-            stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
+            stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}, {len(lines) - (rows - 6)}, {start_line}", curses.A_BOLD)
             # 显示搜索输入
             stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
             # 显示行号输入
@@ -202,12 +276,12 @@ def display_data(stdscr, path):
                 selected_data = max(selected_data - 1, 0)
                 start_line = 0
             elif key == curses.KEY_DOWN or key == 456:
-                if start_line >= len(lines) - (rows - 6):
+                if start_line >= max(len(lines) - (rows - 6), 1):
                     start_line = len(lines) - (rows - 6) - 1
                 else:
                     start_line = (start_line + 1) % max(len(lines) - (rows - 6), 1)
             elif key == curses.KEY_UP or key == 450:
-                if start_line >= len(lines) - (rows - 6):
+                if start_line >= max(len(lines) - (rows - 6), 1):
                     start_line = len(lines) - (rows - 6) - 1
                 else:
                     start_line = (start_line - 1) % max(len(lines) - (rows - 6), 1)
@@ -262,13 +336,32 @@ def file_explorer(stdscr):
     current_path = os.getcwd()
     stdscr.encoding = 'utf-8'
     selected_file = [0]
-    files = list_files(stdscr, current_path, selected_file[-1])
+    search_str = ""  # 新增：搜索字符串
+    files = list_files(stdscr, current_path, selected_file[-1], search_str)
 
     while True:
         key = stdscr.getch()
         rows, cols = stdscr.getmaxyx()
 
-        if key == curses.KEY_RIGHT or key == 454:
+        # 处理搜索输入
+        if 32 <= key <= 126:  # 所有ascii可显示字符
+            search_str += chr(key)  # 添加输入
+            selected_file[-1] = 0  # 重置选中位置到第一个
+        elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
+            if search_str:
+                # 有搜索字符串时，删除搜索字符
+                search_str = search_str[:-1]  # 删除最后一个字符
+                selected_file[-1] = 0  # 重置选中位置到第一个
+            else:
+                # 没有搜索字符串时，返回上级目录
+                current_path = os.path.normpath(os.path.join(current_path, "../"))
+                if len(selected_file) > 1:
+                    selected_file.pop()
+                else:
+                    selected_file = [0]
+        elif key == 27:  # ESC
+            exit()  # 退出程序
+        elif key == curses.KEY_RIGHT or key == 454:
             selected_file[-1] = (selected_file[-1] + (rows - 3)) % len(files)
         elif key == curses.KEY_LEFT or key == 452:
             selected_file[-1] = (selected_file[-1] - (rows - 3)) % len(files)
@@ -277,30 +370,31 @@ def file_explorer(stdscr):
         elif (key == curses.KEY_DOWN or key == 456):
             selected_file[-1] = (selected_file[-1] + 1) % len(files)
         elif key == ord('\n'):
-            new_path = os.path.normpath(os.path.join(current_path, files[selected_file[-1]]))
-            if os.path.isdir(new_path):
-                current_path = new_path
-                if files[selected_file[-1]] == "../":
-                    if len(selected_file) > 1:
-                        selected_file.pop()
+            if files:  # 确保文件列表不为空
+                new_path = os.path.normpath(os.path.join(current_path, files[selected_file[-1]]))
+                if os.path.isdir(new_path):
+                    current_path = new_path
+                    if files[selected_file[-1]] == "../":
+                        if len(selected_file) > 1:
+                            selected_file.pop()
+                        else:
+                            selected_file = [0]
                     else:
-                        selected_file = [0]
-                else:
-                    selected_file.append(0)
-            elif os.path.isfile(new_path):
-                if new_path.endswith('.jsonl') or new_path.endswith('.json'):
-                    display_data(stdscr, new_path)
-                    files = list_files(stdscr, current_path, selected_file[-1])
+                        selected_file.append(0)
+                    search_str = ""  # 进入新目录时清除搜索
+                elif os.path.isfile(new_path):
+                    if new_path.endswith('.jsonl') or new_path.endswith('.json') or new_path.endswith('.txt'):
+                        display_data(stdscr, new_path)
+                        files = list_files(stdscr, current_path, selected_file[-1], search_str)
         elif key == curses.KEY_BACKSPACE or key == 8:
             current_path = os.path.normpath(os.path.join(current_path, "../"))
             if len(selected_file) > 1:
                 selected_file.pop()
             else:
                 selected_file = [0]
-        elif key == 27:
-            exit()
+            search_str = ""  # 返回上级目录时清除搜索
 
-        files = list_files(stdscr, current_path, selected_file[-1])
+        files = list_files(stdscr, current_path, selected_file[-1], search_str)
         stdscr.refresh()
 
 
