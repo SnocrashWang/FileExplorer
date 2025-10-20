@@ -9,21 +9,50 @@ SEARCH_HIGHLIGHT = 6
 KEY_HIGHLIGHT = 3
 
 
-def list_files(stdscr, current_path, selected_file, search_str=""):
+class FileCache:
+    def __init__(self):
+        self.cache = {}  # {path: (timestamp, [file_list])}
+    
+    def get_files(self, path):
+        current_time = os.path.getmtime(path)
+        
+        if path in self.cache:
+            cached_time, files = self.cache[path]
+            if cached_time == current_time:
+                return files
+        
+        # 重新读取文件列表
+        try:
+            paths = os.listdir(path)
+            paths.sort()
+            
+            # 分离文件和文件夹
+            folders = [f + '/' for f in paths if os.path.isdir(os.path.join(path, f))]
+            files = [f for f in paths if os.path.isfile(os.path.join(path, f))]
+            result = ['../'] + folders + files
+            
+            # 更新缓存
+            self.cache[path] = (current_time, result)
+            return result
+        except (OSError, PermissionError):
+            return ['../']
+    
+    def clear(self):
+        self.cache.clear()
+
+
+def list_files(stdscr, current_path, selected_file, search_str="", file_cache=None, original_files=None):
     stdscr.clear()
     rows, cols = stdscr.getmaxyx()
     stdscr.addstr(0, 0, f"Current directory: {current_path}\n"[:cols], curses.A_BOLD)
     
-    paths = os.listdir(current_path)
-    paths.sort()
-
-    # 分离文件和文件夹
-    folders = [f + '/' for f in paths if os.path.isdir(os.path.join(current_path, f))]
-    files = [f for f in paths if os.path.isfile(os.path.join(current_path, f))]
-    paths = ['../'] + folders + files
+    # 使用缓存获取文件列表
+    if original_files is None:
+        original_files = file_cache.get_files(current_path) if file_cache else []
+    
+    paths = original_files.copy()
     
     # 如果有搜索词，筛选路径
-    original_paths = paths.copy()  # 保存原始路径用于显示
     if search_str:
         filtered_paths = []
         for path in paths:
@@ -87,18 +116,18 @@ def list_files(stdscr, current_path, selected_file, search_str=""):
 
     # 显示页面信息和搜索结果统计
     if search_str:
-        stdscr.addstr(1, 0, f"Page: {page + 1}/{math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}, Found {len(paths)}/{len(original_paths)} items"[:cols], curses.A_BOLD)
+        stdscr.addstr(1, 0, f"Page: {page + 1}/{math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}, Found {len(paths)}/{len(original_files)} items"[:cols], curses.A_BOLD)
     else:
         stdscr.addstr(1, 0, f"Page: {page + 1}/{math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
     
     # 显示提示信息
     if search_str:
-        stdscr.addstr(rows - 1, 0, f"[...] Searching: '{search_str}'"[:cols-1], curses.A_BOLD)
+        stdscr.addstr(rows - 1, 0, f"[...] Type to search: {search_str}"[:cols-1], curses.A_BOLD)
     else:
         stdscr.addstr(rows - 1, 0, "[...] Supported file extensions: jsonl, json, txt. Type to search. Press ESC to quit."[:cols-1], curses.A_BOLD)
     
     stdscr.refresh()
-    return paths
+    return paths, original_files  # 返回筛选后的文件和原始文件列表
 
 
 def split_str(s, n):
@@ -257,7 +286,7 @@ def display_data(stdscr, path):
             # 显示文件名
             stdscr.addstr(0, 0, f"JSONL file: {path[:cols-12]}", curses.A_BOLD)
             # 显示数据编号
-            stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}, {len(lines) - (rows - 6)}, {start_line}", curses.A_BOLD)
+            stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
             # 显示搜索输入
             stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
             # 显示行号输入
@@ -266,7 +295,6 @@ def display_data(stdscr, path):
             stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch data, TAB to switch mode, Ctrl+A to refresh, ESC to quit."[:cols-1], curses.A_BOLD)
 
             stdscr.refresh()
-            # stdscr.addstr(rows - 1, cols - 10, str(key))
 
             key = stdscr.getch()
             if key == curses.KEY_RIGHT or key == 454:
@@ -335,9 +363,15 @@ def file_explorer(stdscr):
     curses.curs_set(0)
     current_path = os.getcwd()
     stdscr.encoding = 'utf-8'
-    selected_file = [0]
-    search_str = ""  # 新增：搜索字符串
-    files = list_files(stdscr, current_path, selected_file[-1], search_str)
+    selected_file = 0
+    search_str = ""  # 搜索字符串
+    file_cache = FileCache()  # 创建文件缓存实例
+    
+    # 新增：保存每个目录的原始文件列表和选中位置
+    path_history = {}  # {path: {"original_files": [], "selected_index": 0}}
+    
+    files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache)
+    path_history[current_path] = {"original_files": original_files, "selected_index": selected_file}
 
     while True:
         key = stdscr.getch()
@@ -346,55 +380,81 @@ def file_explorer(stdscr):
         # 处理搜索输入
         if 32 <= key <= 126:  # 所有ascii可显示字符
             search_str += chr(key)  # 添加输入
-            selected_file[-1] = 0  # 重置选中位置到第一个
+            selected_file = 0  # 重置选中位置到第一个
         elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
             if search_str:
                 # 有搜索字符串时，删除搜索字符
                 search_str = search_str[:-1]  # 删除最后一个字符
-                selected_file[-1] = 0  # 重置选中位置到第一个
+                selected_file = 0  # 重置选中位置到第一个
             else:
                 # 没有搜索字符串时，返回上级目录
+                # 保存当前目录的选中位置（使用原始文件列表的索引）
+                if current_path in path_history:
+                    current_history = path_history[current_path]
+                    # 找到当前选中文件在原始文件列表中的位置
+                    if files and 0 <= selected_file < len(files):
+                        selected_filename = files[selected_file]
+                        if selected_filename in current_history["original_files"]:
+                            original_index = current_history["original_files"].index(selected_filename)
+                            current_history["selected_index"] = original_index
+                
                 current_path = os.path.normpath(os.path.join(current_path, "../"))
-                if len(selected_file) > 1:
-                    selected_file.pop()
+                # 恢复上级目录的选中位置
+                if current_path in path_history:
+                    selected_file = path_history[current_path]["selected_index"]
                 else:
-                    selected_file = [0]
+                    selected_file = 0
+                search_str = ""  # 清除搜索
         elif key == 27:  # ESC
             exit()  # 退出程序
         elif key == curses.KEY_RIGHT or key == 454:
-            selected_file[-1] = (selected_file[-1] + (rows - 3)) % len(files)
+            selected_file = (selected_file + (rows - 3)) % len(files)
         elif key == curses.KEY_LEFT or key == 452:
-            selected_file[-1] = (selected_file[-1] - (rows - 3)) % len(files)
+            selected_file = (selected_file - (rows - 3)) % len(files)
         elif (key == curses.KEY_UP or key == 450):
-            selected_file[-1] = (selected_file[-1] - 1) % len(files)
+            selected_file = (selected_file - 1) % len(files)
         elif (key == curses.KEY_DOWN or key == 456):
-            selected_file[-1] = (selected_file[-1] + 1) % len(files)
+            selected_file = (selected_file + 1) % len(files)
         elif key == ord('\n'):
             if files:  # 确保文件列表不为空
-                new_path = os.path.normpath(os.path.join(current_path, files[selected_file[-1]]))
+                new_path = os.path.normpath(os.path.join(current_path, files[selected_file]))
                 if os.path.isdir(new_path):
+                    # 保存当前目录的选中位置（使用原始文件列表的索引）
+                    if current_path in path_history:
+                        current_history = path_history[current_path]
+                        # 找到当前选中文件在原始文件列表中的位置
+                        if files and 0 <= selected_file < len(files):
+                            selected_filename = files[selected_file]
+                            if selected_filename in current_history["original_files"]:
+                                original_index = current_history["original_files"].index(selected_filename)
+                                current_history["selected_index"] = original_index
+                    
                     current_path = new_path
-                    if files[selected_file[-1]] == "../":
-                        if len(selected_file) > 1:
-                            selected_file.pop()
+                    if files[selected_file] == "../":
+                        if current_path in path_history:
+                            selected_file = path_history[current_path]["selected_index"]
                         else:
-                            selected_file = [0]
+                            selected_file = 0
                     else:
-                        selected_file.append(0)
+                        selected_file = 0
                     search_str = ""  # 进入新目录时清除搜索
                 elif os.path.isfile(new_path):
                     if new_path.endswith('.jsonl') or new_path.endswith('.json') or new_path.endswith('.txt'):
                         display_data(stdscr, new_path)
-                        files = list_files(stdscr, current_path, selected_file[-1], search_str)
-        elif key == curses.KEY_BACKSPACE or key == 8:
-            current_path = os.path.normpath(os.path.join(current_path, "../"))
-            if len(selected_file) > 1:
-                selected_file.pop()
-            else:
-                selected_file = [0]
-            search_str = ""  # 返回上级目录时清除搜索
+                        # 重新获取当前目录的文件列表
+                        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache)
+                        if current_path not in path_history:
+                            path_history[current_path] = {"original_files": original_files, "selected_index": selected_file}
 
-        files = list_files(stdscr, current_path, selected_file[-1], search_str)
+        # 更新显示
+        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache)
+        
+        # 更新路径历史
+        if current_path not in path_history:
+            path_history[current_path] = {"original_files": original_files, "selected_index": selected_file}
+        else:
+            path_history[current_path]["original_files"] = original_files
+        
         stdscr.refresh()
 
 
