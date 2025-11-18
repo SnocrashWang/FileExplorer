@@ -5,7 +5,6 @@ import json
 import math
 import re
 import traceback
-from functools import lru_cache
 from typing import Dict, Tuple, List, Any
 
 SEARCH_HIGHLIGHT = 6
@@ -174,10 +173,9 @@ class FileCache:
         self.cache.clear()
 
 
-def list_files(stdscr, current_path, selected_file, search_str="", file_cache=None, original_files=None):
+def list_files(stdscr, current_path, selected_file, search_str="", file_cache=None, original_files=None, key=""):
     stdscr.clear()
     rows, cols = stdscr.getmaxyx()
-    stdscr.addstr(0, 0, f"Current directory: {current_path}\n"[:cols], curses.A_BOLD)
     
     # 使用缓存获取文件列表
     if original_files is None:
@@ -247,17 +245,16 @@ def list_files(stdscr, current_path, selected_file, search_str="", file_cache=No
             # 没有搜索词时的正常显示
             stdscr.addstr(idx + 2, 0, display_path, mode_select)
 
-    # 显示页面信息和搜索结果统计
+    # 显示页面信息和提示
+    stdscr.addstr(0, 0, f"Current directory: {current_path}\n"[:cols], curses.A_BOLD)
     if search_str:
         stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}, Found {len(paths)} / {len(original_files)} items"[:cols], curses.A_BOLD)
-    else:
-        stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
-    
-    # 显示提示信息
-    if search_str:
         stdscr.addstr(rows - 1, 0, f"[...] Type to search: {search_str}"[:cols-1], curses.A_BOLD)
     else:
+        stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
         stdscr.addstr(rows - 1, 0, "[...] Supported file extensions: jsonl, json, txt. Type to search. Press ESC to quit."[:cols-1], curses.A_BOLD)
+    # 显示key值
+    stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
     
     stdscr.refresh()
     return paths, original_files  # 返回筛选后的文件和原始文件列表
@@ -471,7 +468,7 @@ def display_data(stdscr, path):
             # 显示数据编号
             stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
             # 显示key值
-            # stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
+            stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
             # 显示搜索输入
             stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
             # 显示行号输入
@@ -638,12 +635,12 @@ def file_explorer(stdscr):
                     if new_path.endswith('.jsonl') or new_path.endswith('.json') or new_path.endswith('.txt'):
                         display_data(stdscr, new_path)
                         # 重新获取当前目录的文件列表
-                        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache)
+                        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache, key=key)
                         if current_path not in path_history:
                             path_history[current_path] = {"original_files": original_files, "selected_index": selected_file}
 
         # 更新显示
-        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache)
+        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache, key=key)
         
         # 更新路径历史
         if current_path not in path_history:
