@@ -4,10 +4,28 @@ import curses.ascii
 import json
 import math
 import re
+import traceback
 
 SEARCH_HIGHLIGHT = 6
 KEY_HIGHLIGHT = 3
 
+class TypeDisplayJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        # 对于类型对象，返回一个特殊的字典结构
+        if isinstance(obj, type):
+            return {"__class__": obj.__name__}
+        elif hasattr(obj, '__dict__'):
+            return obj.__dict__
+        return super().default(obj)
+    
+    def encode(self, obj):
+        # 先调用父类的 encode 生成标准 JSON
+        json_str = super().encode(obj)
+        
+        # 使用正则表达式替换特殊标记
+        # 将 {"__class__": "str"} 替换为 str
+        json_str = re.sub(r'\{[\s\n]*"__class__"\s*:\s*"(\w+)"[\s\n]*\}', r'\1', json_str)
+        return json_str
 
 class FileCache:
     def __init__(self):
@@ -116,9 +134,9 @@ def list_files(stdscr, current_path, selected_file, search_str="", file_cache=No
 
     # 显示页面信息和搜索结果统计
     if search_str:
-        stdscr.addstr(1, 0, f"Page: {page + 1}/{math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}, Found {len(paths)}/{len(original_files)} items"[:cols], curses.A_BOLD)
+        stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}, Found {len(paths)} / {len(original_files)} items"[:cols], curses.A_BOLD)
     else:
-        stdscr.addstr(1, 0, f"Page: {page + 1}/{math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
+        stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
     
     # 显示提示信息
     if search_str:
@@ -196,24 +214,48 @@ def search_in_list(string_list, target_string):
 
 def load_json_data(json_lines, selected_data, cols):
     try:
-        json_content = json.loads(json_lines[selected_data])
-        json_str = json.dumps(json_content, ensure_ascii=False, indent=2)
-        json_str = re.sub(r'(?<!\\)\\n', '\n', json_str)
+        full_json_data = json.loads(json_lines[selected_data])
+        full_json_str = json.dumps(full_json_data, ensure_ascii=False, indent=2)
+        full_json_str = re.sub(r'(?<!\\)\\n', '\n', full_json_str)
+
+        def replace_non_dict_with_none(data):
+            """
+            递归地将字典中所有非字典的值替换为None
+            """
+            if isinstance(data, dict):
+                for key in data:
+                    if isinstance(data[key], dict) or isinstance(data[key], list):
+                        replace_non_dict_with_none(data[key])
+                    else:
+                        data[key] = type(data[key])
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) or isinstance(item, list):
+                        replace_non_dict_with_none(item)
+                    else:
+                        item = type(item)
+            return data
+
+        skeleton_json_data = replace_non_dict_with_none(full_json_data.copy())
+        skeleton_json_str = json.dumps(skeleton_json_data, cls=TypeDisplayJSONEncoder, ensure_ascii=False, indent=2)
+        skeleton_json_str = re.sub(r'(?<!\\)\\n', '\n', skeleton_json_str)
     except json.JSONDecodeError:
-        json_str = "Error: Invalid JSON content."
+        full_json_str = "Error: Invalid JSON data."
+        skeleton_json_str = "Error: Invalid JSON data."
     except IndexError:
-        json_str = "Error: Empty file."
+        full_json_str = "Error: Empty file."
+        skeleton_json_str = "Error: Empty file."
 
-    json_str_lines = json_str.split('\n')
-    lines = []
-    for line in json_str_lines:
-        lines.extend(split_str(line, cols))
-    return lines
+    full_lines, skeleton_lines = [], []
+    for line in full_json_str.split('\n'):
+        full_lines.extend(split_str(line, cols))
+    for line in skeleton_json_str.split('\n'):
+        skeleton_lines.extend(split_str(line, cols))
+    return full_lines, skeleton_lines
 
 
-def search_next(json_lines, selected_data, start_line, search_str, rows, cols):
+def search_next(json_lines, selected_data, lines, start_line, search_str):
     while selected_data < len(json_lines):
-        lines = load_json_data(json_lines, selected_data, cols)
         line_diff = search_in_list(lines[start_line+1:], search_str)
         if line_diff != -1:
             next_line = start_line + line_diff
@@ -270,6 +312,7 @@ def display_data(stdscr, path):
         key = ''
         mode_list = ["SEARCH", "JUMP"]
         mode = mode_list[selected_mode]
+        show_values = True
 
         while True:
             rows, cols = stdscr.getmaxyx()
@@ -277,22 +320,31 @@ def display_data(stdscr, path):
 
             # 显示 json 内容
             try:
-                lines = load_json_data(json_lines, selected_data, cols)
+                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols)
+                if show_values:
+                    lines = full_lines
+                else:
+                    lines = skeleton_lines
+            except:
+                lines = []
+                for line in traceback.format_exc().split('\n'):
+                    lines.extend(split_str(line, cols))
+            finally:
                 for r, split_line in enumerate(lines[start_line:start_line+rows-5], start=2):
                     add_colored_json(stdscr, r, 0, split_line, search=search_str)
-            except Exception as e:
-                stdscr.addstr(2, 0, str(e))
 
             # 显示文件名
             stdscr.addstr(0, 0, f"JSONL file: {path[:cols-12]}", curses.A_BOLD)
             # 显示数据编号
             stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
+            # 显示key值
+            # stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
             # 显示搜索输入
             stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
             # 显示行号输入
             stdscr.addstr(rows - 2, 0, f"[...] Type NUMBERs to choose a line, ENTER to jump: {jump_line_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "JUMP" else curses.A_BOLD)
             # 显示提示
-            stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch data, TAB to switch mode, Ctrl+A to refresh, ESC to quit."[:cols-1], curses.A_BOLD)
+            stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch data, TAB to switch mode, INSERT to conceal values, Ctrl+A to refresh, ESC to quit."[:cols-1], curses.A_BOLD)
 
             stdscr.refresh()
 
@@ -321,6 +373,9 @@ def display_data(stdscr, path):
             elif key == curses.KEY_BTAB or key == 9:
                 selected_mode = (selected_mode + 1) % len(mode_list)
                 mode = mode_list[selected_mode]
+            elif key == curses.KEY_IC or key == 506:
+                show_values = not show_values
+                start_line = 0  # 重置到顶部以便立即看到变化
 
             if mode == "SEARCH":
                 if 32 <= key <= 126:  # 所有ascii可显示字符
@@ -331,7 +386,7 @@ def display_data(stdscr, path):
                     try:
                         stdscr.addstr(rows - 1, cols - 8, f"LOADING", curses.A_BOLD)
                         stdscr.refresh()
-                        selected_data, start_line = search_next(json_lines, selected_data, start_line, search_str, rows, cols)
+                        selected_data, start_line = search_next(json_lines, selected_data, lines, start_line, search_str)
                     except:
                         pass
             elif mode == "JUMP":
