@@ -5,6 +5,8 @@ import json
 import math
 import re
 import traceback
+from functools import lru_cache
+from typing import Dict, Tuple, List, Any
 
 SEARCH_HIGHLIGHT = 6
 KEY_HIGHLIGHT = 3
@@ -26,6 +28,119 @@ class TypeDisplayJSONEncoder(json.JSONEncoder):
         # 将 {"__class__": "str"} 替换为 str
         json_str = re.sub(r'\{[\s\n]*"__class__"\s*:\s*"(\w+)"[\s\n]*\}', r'\1', json_str)
         return json_str
+
+class JSONDataCache:
+    """JSON数据缓存，避免重复序列化"""
+    
+    def __init__(self, max_size=100):
+        self.max_size = max_size
+        self.full_cache: Dict[int, List[str]] = {}  # {data_index: lines}
+        self.skeleton_cache: Dict[int, List[str]] = {}  # {data_index: lines}
+        self.access_order: List[int] = []  # 访问顺序，用于LRU
+    
+    def get_lines(self, data_index: int, cols: int, json_line: str) -> Tuple[List[str], List[str]]:
+        """获取缓存的行，如果没有则计算并缓存"""
+        cache_key = data_index
+        
+        # 更新访问顺序
+        if cache_key in self.access_order:
+            self.access_order.remove(cache_key)
+        self.access_order.append(cache_key)
+        
+        # 如果缓存超过最大大小，移除最久未使用的
+        while len(self.access_order) > self.max_size:
+            old_key = self.access_order.pop(0)
+            self.full_cache.pop(old_key, None)
+            self.skeleton_cache.pop(old_key, None)
+        
+        # 如果缓存中存在，直接返回
+        if cache_key in self.full_cache and cache_key in self.skeleton_cache:
+            return self.full_cache[cache_key], self.skeleton_cache[cache_key]
+        
+        # 否则计算并缓存
+        full_lines, skeleton_lines = self._compute_lines(json_line, cols)
+        
+        self.full_cache[cache_key] = full_lines
+        self.skeleton_cache[cache_key] = skeleton_lines
+        
+        return full_lines, skeleton_lines
+    
+    def _compute_lines(self, json_line: str, cols: int) -> Tuple[List[str], List[str]]:
+        """计算JSON数据的行"""
+        try:
+            full_json_data = json.loads(json_line)
+            full_json_str = json.dumps(full_json_data, ensure_ascii=False, indent=2)
+            full_json_str = re.sub(r'(?<!\\)\\n', '\n', full_json_str)
+
+            def replace_non_dict_with_none(data):
+                """
+                递归地将字典中所有非字典的值替换为None
+                """
+                if isinstance(data, dict):
+                    for key in data:
+                        if isinstance(data[key], dict) or isinstance(data[key], list):
+                            replace_non_dict_with_none(data[key])
+                        else:
+                            data[key] = type(data[key])
+                elif isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) or isinstance(item, list):
+                            replace_non_dict_with_none(item)
+                        else:
+                            item = type(item)
+                return data
+
+            skeleton_json_data = replace_non_dict_with_none(full_json_data.copy())
+            skeleton_json_str = json.dumps(skeleton_json_data, cls=TypeDisplayJSONEncoder, ensure_ascii=False, indent=2)
+            skeleton_json_str = re.sub(r'(?<!\\)\\n', '\n', skeleton_json_str)
+        except json.JSONDecodeError:
+            full_json_str = "Error: Invalid JSON data."
+            skeleton_json_str = "Error: Invalid JSON data."
+        except Exception as e:
+            full_json_str = f"Error: {str(e)}"
+            skeleton_json_str = f"Error: {str(e)}"
+
+        full_lines, skeleton_lines = [], []
+        for line in full_json_str.split('\n'):
+            full_lines.extend(self.split_str(line, cols))
+        for line in skeleton_json_str.split('\n'):
+            skeleton_lines.extend(self.split_str(line, cols))
+        
+        return full_lines, skeleton_lines
+    
+    @staticmethod
+    def split_str(s, n):
+        """分割字符串，考虑中英文字符宽度"""
+        result = []
+        length = 0
+        n = int(n)
+        current_str = ''
+        for char in s:
+            char_length = 1 if ord(char) < 128 else 2  # 英文字符长度为1，中文字符长度为2
+            if length + char_length <= n:
+                current_str += char
+                length += char_length
+            else:
+                result.append(current_str)
+                current_str = char
+                length = char_length
+        result.append(current_str)
+        return result
+    
+    def clear(self):
+        """清空缓存"""
+        self.full_cache.clear()
+        self.skeleton_cache.clear()
+        self.access_order.clear()
+    
+    def get_cache_info(self) -> Dict[str, Any]:
+        """获取缓存统计信息"""
+        return {
+            "cache_size": len(self.full_cache),
+            "max_size": self.max_size,
+            "memory_usage_estimate": sum(len(''.join(lines)) for lines in self.full_cache.values()) // 1024  # KB
+        }
+
 
 class FileCache:
     def __init__(self):
@@ -212,7 +327,24 @@ def search_in_list(string_list, target_string):
     return -1
 
 
-def load_json_data(json_lines, selected_data, cols):
+def load_json_data(json_lines, selected_data, cols, json_cache=None):
+    """使用缓存加载JSON数据"""
+    if json_cache is None:
+        # 如果没有缓存，回退到原始方法
+        return _load_json_data_original(json_lines, selected_data, cols)
+    
+    try:
+        json_line = json_lines[selected_data]
+        full_lines, skeleton_lines = json_cache.get_lines(selected_data, cols, json_line)
+        return full_lines, skeleton_lines
+    except IndexError:
+        return ["Error: Empty file."], ["Error: Empty file."]
+    except Exception as e:
+        return [f"Error: {str(e)}"], [f"Error: {str(e)}"]
+
+
+def _load_json_data_original(json_lines, selected_data, cols):
+    """原始的数据加载方法（备用）"""
     try:
         full_json_data = json.loads(json_lines[selected_data])
         full_json_str = json.dumps(full_json_data, ensure_ascii=False, indent=2)
@@ -295,6 +427,9 @@ def read_txt(path):
 
 
 def display_data(stdscr, path):
+    # 创建JSON数据缓存
+    json_cache = JSONDataCache(max_size=50)  # 缓存50条数据
+    
     while True:
         if path.endswith('.jsonl'):
             json_lines = read_jsonl(path)
@@ -304,6 +439,7 @@ def display_data(stdscr, path):
             json_lines = read_txt(path)
         else:
             return -1
+        
         selected_data = 0
         selected_mode = 0
         start_line = 0
@@ -320,11 +456,8 @@ def display_data(stdscr, path):
 
             # 显示 json 内容
             try:
-                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols)
-                if show_values:
-                    lines = full_lines
-                else:
-                    lines = skeleton_lines
+                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
+                lines = full_lines if show_values else skeleton_lines
             except:
                 lines = []
                 for line in traceback.format_exc().split('\n'):
@@ -344,7 +477,7 @@ def display_data(stdscr, path):
             # 显示行号输入
             stdscr.addstr(rows - 2, 0, f"[...] Type NUMBERs to choose a line, ENTER to jump: {jump_line_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "JUMP" else curses.A_BOLD)
             # 显示提示
-            stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch data, TAB to switch mode, INSERT to conceal values, Ctrl+A to refresh, ESC to quit."[:cols-1], curses.A_BOLD)
+            stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch data, TAB to switch mode, INSERT to conceal values, Ctrl+A to refresh, Ctrl+Z to clear cache, ESC to quit."[:cols-1], curses.A_BOLD)
 
             stdscr.refresh()
 
@@ -368,8 +501,16 @@ def display_data(stdscr, path):
             elif key == 27:  # ESC
                 stdscr.clear()
                 return 0
-            elif key == (ord('a') & 0x1f) or key == 1:
+            elif key == (ord('a') & 0x1f) or key == 1:  # Ctrl+A
                 break
+            elif key == (ord('z') & 0x1f) or key == 26:  # Ctrl+Z - 清除缓存
+                json_cache.clear()
+                # 重新加载当前数据以刷新显示
+                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
+                if show_values:
+                    lines = full_lines
+                else:
+                    lines = skeleton_lines
             elif key == curses.KEY_BTAB or key == 9:
                 selected_mode = (selected_mode + 1) % len(mode_list)
                 mode = mode_list[selected_mode]
