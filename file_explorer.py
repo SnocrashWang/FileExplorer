@@ -1,4 +1,5 @@
 import os
+import sys
 import curses
 import curses.ascii
 import json
@@ -6,9 +7,30 @@ import math
 import re
 import traceback
 from typing import Dict, Tuple, List, Any
+import argparse
+
 
 SEARCH_HIGHLIGHT = 6
 KEY_HIGHLIGHT = 3
+KEY_BACKSPACE = 8
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-d', '--debug', action='store_true', help='Enable debug mode')
+args = parser.parse_args()
+
+
+class Logger:
+    def __init__(self):
+        self.writer = open('.file_explorer.log', 'w', encoding='utf-8')
+    
+    def write(self, message):
+        self.writer.write(f"Line: {sys._getframe(1).f_lineno}" + '\n')
+        self.writer.write(str(message) + '\n')
+        self.writer.flush()
+
+if args.debug:
+    log = Logger()
+
 
 class TypeDisplayJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -27,6 +49,7 @@ class TypeDisplayJSONEncoder(json.JSONEncoder):
         # 将 {"__class__": "str"} 替换为 str
         json_str = re.sub(r'\{[\s\n]*"__class__"\s*:\s*"(\w+)"[\s\n]*\}', r'\1', json_str)
         return json_str
+
 
 class JSONDataCache:
     """JSON数据缓存，避免重复序列化"""
@@ -254,7 +277,8 @@ def list_files(stdscr, current_path, selected_file, search_str="", file_cache=No
         stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
         stdscr.addstr(rows - 1, 0, "[...] Supported file extensions: jsonl, json, txt. Type to search. Press ESC to quit."[:cols-1], curses.A_BOLD)
     # 显示key值
-    stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
+    if args.debug:
+        stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
     
     stdscr.refresh()
     return paths, original_files  # 返回筛选后的文件和原始文件列表
@@ -383,8 +407,10 @@ def _load_json_data_original(json_lines, selected_data, cols):
     return full_lines, skeleton_lines
 
 
-def search_next(json_lines, selected_data, lines, start_line, search_str):
+def search_next(json_lines, selected_data, start_line, search_str, show_values, cols):
     while selected_data < len(json_lines):
+        full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols)
+        lines = full_lines if show_values else skeleton_lines
         line_diff = search_in_list(lines[start_line+1:], search_str)
         if line_diff != -1:
             next_line = start_line + line_diff
@@ -468,7 +494,8 @@ def display_data(stdscr, path):
             # 显示数据编号
             stdscr.addstr(1, 0, f"Current line: {selected_data + 1} / {len(json_lines)}", curses.A_BOLD)
             # 显示key值
-            stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
+            if args.debug:
+                stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
             # 显示搜索输入
             stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
             # 显示行号输入
@@ -504,10 +531,7 @@ def display_data(stdscr, path):
                 json_cache.clear()
                 # 重新加载当前数据以刷新显示
                 full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
-                if show_values:
-                    lines = full_lines
-                else:
-                    lines = skeleton_lines
+                lines = full_lines if show_values else skeleton_lines
             elif key == curses.KEY_BTAB or key == 9:
                 selected_mode = (selected_mode + 1) % len(mode_list)
                 mode = mode_list[selected_mode]
@@ -518,19 +542,19 @@ def display_data(stdscr, path):
             if mode == "SEARCH":
                 if 32 <= key <= 126:  # 所有ascii可显示字符
                     search_str += chr(key)  # 添加输入
-                elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
+                elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
                     search_str = search_str[:-1]  # 删除最后一个字符
                 elif key == ord('\n'):  # 回车
                     try:
                         stdscr.addstr(rows - 1, cols - 8, f"LOADING", curses.A_BOLD)
                         stdscr.refresh()
-                        selected_data, start_line = search_next(json_lines, selected_data, lines, start_line, search_str)
+                        selected_data, start_line = search_next(json_lines, selected_data, start_line, search_str, show_values, cols)
                     except:
                         pass
             elif mode == "JUMP":
                 if 48 <= key <= 57:  # 数字键（0-9）
                     jump_line_str += chr(key)  # 添加输入
-                elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
+                elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
                     jump_line_str = jump_line_str[:-1]  # 删除最后一个字符
                 elif key == ord('\n'):  # 回车
                     try:
@@ -574,7 +598,7 @@ def file_explorer(stdscr):
         if 32 <= key <= 126:  # 所有ascii可显示字符
             search_str += chr(key)  # 添加输入
             selected_file = 0  # 重置选中位置到第一个
-        elif key == curses.KEY_BACKSPACE or key == 8:  # 处理删除
+        elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
             if search_str:
                 # 有搜索字符串时，删除搜索字符
                 search_str = search_str[:-1]  # 删除最后一个字符
