@@ -8,6 +8,7 @@ import re
 import traceback
 from typing import Dict, Tuple, List, Any
 import argparse
+from enum import Enum
 
 
 SEARCH_HIGHLIGHT = 6
@@ -196,92 +197,50 @@ class FileCache:
         self.cache.clear()
 
 
-def list_files(stdscr, current_path, selected_file, search_str="", file_cache=None, original_files=None, key=""):
-    stdscr.clear()
-    rows, cols = stdscr.getmaxyx()
-    
-    # 使用缓存获取文件列表
-    if original_files is None:
-        original_files = file_cache.get_files(current_path) if file_cache else []
-    
-    paths = original_files.copy()
-    
-    # 如果有搜索词，筛选路径
-    if search_str:
-        filtered_paths = []
-        for path in paths:
-            if search_str.lower() in path.lower():
-                filtered_paths.append(path)
-        paths = filtered_paths
-        # 如果筛选后没有文件，保持选中位置为0
-        if not paths:
-            paths = []
-            selected_file = 0
+class ToolType(Enum):
+    SEARCH = 0
+    JUMP = 1
 
-    # 显示所有路径
-    row_per_page = rows - 3
-    page = selected_file // row_per_page if paths else 0
-    paths_in_page = paths[page * row_per_page : min((page + 1) * row_per_page, len(paths))]
+class ToolSelector:
+    def __init__(self, tool=ToolType.SEARCH):
+        self.tool = tool
+        self._tool_list = list(ToolType)
     
-    for idx, path in enumerate(paths_in_page):
-        display_path = path[:cols]
-        mode_select = curses.A_REVERSE if idx == selected_file % row_per_page else curses.A_NORMAL
-        mode_folder = curses.A_UNDERLINE if path.endswith('/') else curses.A_NORMAL
-        
-        # 如果有搜索词，高亮匹配的部分
-        if search_str and search_str.lower() in path.lower():
-            # 找到所有匹配的位置
-            start_positions = []
-            lower_path = path.lower()
-            lower_search = search_str.lower()
-            pos = lower_path.find(lower_search)
-            while pos != -1:
-                start_positions.append(pos)
-                pos = lower_path.find(lower_search, pos + 1)
-            
-            # 分段显示并高亮
-            current_col = 0
-            last_pos = 0
-            for start_pos in start_positions:
-                end_pos = start_pos + len(search_str)
-                # 显示非高亮部分
-                if last_pos < start_pos:
-                    normal_part = path[last_pos:start_pos]
-                    if current_col + len(normal_part) < cols:
-                        stdscr.addstr(idx + 2, current_col, normal_part, mode_select)
-                        current_col += len(normal_part)
-                
-                # 显示高亮部分
-                highlight_part = path[start_pos:end_pos]
-                if current_col + len(highlight_part) < cols:
-                    stdscr.addstr(idx + 2, current_col, highlight_part, curses.color_pair(SEARCH_HIGHLIGHT))
-                    current_col += len(highlight_part)
-                
-                last_pos = end_pos
-            
-            # 显示剩余部分
-            if last_pos < len(path):
-                remaining_part = path[last_pos:]
-                if current_col + len(remaining_part) < cols:
-                    stdscr.addstr(idx + 2, current_col, remaining_part, mode_select)
+    def switch(self):
+        current_index = self._tool_list.index(self.tool)
+        next_index = (current_index + 1) % len(self._tool_list)
+        self.tool = self._tool_list[next_index]
+
+    def set_tool(self, tool: ToolType):
+        self.tool = tool
+
+
+def read_jsonl(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        json_lines = f.readlines()
+    return json_lines
+
+
+def read_json(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+        if isinstance(json_data, list):
+            json_lines = [json.dumps(d) for d in json_data]
         else:
-            # 没有搜索词时的正常显示
-            stdscr.addstr(idx + 2, 0, display_path, mode_select)
+            json_lines = [json.dumps(json_data)]
+        return json_lines
+    except Exception as e:
+        return [str(e)]
 
-    # 显示页面信息和提示
-    stdscr.addstr(0, 0, f"Current directory: {current_path}\n"[:cols], curses.A_BOLD)
-    if search_str:
-        stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}, Found {len(paths)} / {len(original_files)} items"[:cols], curses.A_BOLD)
-        stdscr.addstr(rows - 1, 0, f"[...] Type to search: {search_str}"[:cols-1], curses.A_BOLD)
-    else:
-        stdscr.addstr(1, 0, f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"[:cols], curses.A_BOLD)
-        stdscr.addstr(rows - 1, 0, "[...] Supported file extensions: jsonl, json, txt. Type to search. Press ESC to quit."[:cols-1], curses.A_BOLD)
-    # 显示key值
-    if args.debug:
-        stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
-    
-    stdscr.refresh()
-    return paths, original_files  # 返回筛选后的文件和原始文件列表
+
+def read_txt(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            json_data = [l.split('\t')[1] for l in f.readlines()]
+        return json_data
+    except Exception as e:
+        return [str(e)]
 
 
 def split_str(s, n):
@@ -335,17 +294,6 @@ def add_colored_json(stdscr, row, col, str, search=None):
             stdscr.addstr(row, col, item[0], curses.color_pair(item[1]))
         else:
             stdscr.addstr(item[0], curses.color_pair(item[1]))
-
-
-def search_in_list(string_list, target_string):
-    if not target_string:
-        return 0
-    # 遍历列表，找到目标字符串第一次出现的位置
-    for index, string in enumerate(string_list, start=1):
-        if target_string in string:
-            return index  # 返回字符串所在的位置（第几个字符串）
-    # 如果目标字符串未出现在任何字符串中
-    return -1
 
 
 def load_json_data(json_lines, selected_data, cols, json_cache=None):
@@ -407,6 +355,17 @@ def _load_json_data_original(json_lines, selected_data, cols):
     return full_lines, skeleton_lines
 
 
+def search_in_list(string_list, target_string):
+    if not target_string:
+        return 0
+    # 遍历列表，找到目标字符串第一次出现的位置
+    for index, string in enumerate(string_list, start=1):
+        if target_string in string:
+            return index  # 返回字符串所在的位置（第几个字符串）
+    # 如果目标字符串未出现在任何字符串中
+    return -1
+
+
 def search_next(json_lines, selected_data, start_line, search_str, show_values, cols):
     while selected_data < len(json_lines):
         full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols)
@@ -421,32 +380,160 @@ def search_next(json_lines, selected_data, start_line, search_str, show_values, 
     return 0, 0
 
 
-def read_jsonl(path):
-    with open(path, 'r', encoding='utf-8') as f:
-        json_lines = f.readlines()
-    return json_lines
+def display_help_info(stdscr):
+    help_lines = [
+        "File Explorer Help",
+        "",
+        "This is a terminal-based file explorer for browsing directories and viewing data files, developed by Wang Mingyuan.",
+        "Supported data file formats include: jsonl, json, txt. Note that txt here is a special format of jsonl used in pretrain data.",
+        "Use up/down arrows to read complete help information.",
+        "",
+        "File Mode",
+        "  Instruction",
+        "    In this mode, you can browse directories and files, and open supported data files (jsonl, json, txt) for a convenient viewing.",
+        "  Operation",
+        "    Navigation",
+        "      UP/DOWN arrows       : Move selection up/down",
+        "      LEFT/RIGHT arrows    : Page up/down",
+        "      ENTER                : Open selected directory/file, enter Data Mode",
+        "      BACKSPACE            : Go to parent directory",
+        "      ESC                  : Exit the explorer",
+        "    Search",
+        "      Type any text        : Filter files by name (ignore case)",
+        "      BACKSPACE            : Delete last character in search",
+        "",
+        "Data Mode",
+        "  Instruction",
+        "    In this mode, you can view the content of jsonl/json format data file, with varies of functionalities to help you explore the data.",
+        "  Operation",
+        "    Navigation",
+        "      UP/DOWN arrows       : Scroll up/down the content",
+        "      LEFT/RIGHT arrows    : View previous/next data entry",
+        "      TAB                  : Switch between Search and Jump tool",
+        "      INSERT               : Switch whether to display the value of json",
+        "      Ctrl+A               : Refresh current data file",
+        "      Ctrl+Z               : Clear data cache",
+        "      ESC                  : Return to File Mode",
+        "    Search Tool",
+        "      Type any text        : Search for the text in current data file",
+        "      BACKSPACE            : Delete last character in search",
+        "      ENTER                : Jump to next occurrence",
+        "    Jump Tool",
+        "      Type line number     : Choose specified data entry (1-based)",
+        "      BACKSPACE            : Delete last character in line number",
+        "      ENTER                : Jump to specified data entry",
+        "",
+        "Press ESC to return..."
+    ]
+    
+    start_line = 0
+
+    while True:
+        stdscr.clear()
+        rows, cols = stdscr.getmaxyx()
+        lines = []
+        for line in help_lines:
+            lines.extend(split_str(line, cols))
+        for i, line in enumerate(lines[start_line:start_line+rows-1]):
+            stdscr.addstr(i, 0, line[:cols-1], curses.A_BOLD)
+        stdscr.refresh()
+
+        key = stdscr.getch()
+        if key == 27:  # ESC key
+            stdscr.clear()
+            return
+        elif key == curses.KEY_UP or key == 450:
+            start_line = max(0, start_line - 1)
+        elif key == curses.KEY_DOWN or key == 456:
+            start_line = min(len(lines) - rows + 1, start_line + 1)
 
 
-def read_json(path):
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
-        if isinstance(json_data, list):
-            json_lines = [json.dumps(d) for d in json_data]
+def display_files(stdscr, current_path, selected_file, search_str="", file_cache=None, original_files=None, key=""):
+    stdscr.clear()
+    rows, cols = stdscr.getmaxyx()
+    
+    # 使用缓存获取文件列表
+    if original_files is None:
+        original_files = file_cache.get_files(current_path) if file_cache else []
+    
+    paths = original_files.copy()
+    
+    # 如果有搜索词，筛选路径
+    if search_str:
+        filtered_paths = []
+        for path in paths:
+            if search_str.lower() in path.lower():
+                filtered_paths.append(path)
+        paths = filtered_paths
+        # 如果筛选后没有文件，保持选中位置为0
+        if not paths:
+            paths = []
+            selected_file = 0
+
+    # 显示所有路径
+    row_per_page = rows - 4
+    page = selected_file // row_per_page if paths else 0
+    paths_in_page = paths[page * row_per_page : min((page + 1) * row_per_page, len(paths))]
+    
+    for idx, path in enumerate(paths_in_page):
+        display_path = path[:cols]
+        mode_select = curses.A_REVERSE if idx == selected_file % row_per_page else curses.A_NORMAL
+        mode_folder = curses.A_UNDERLINE if path.endswith('/') else curses.A_NORMAL
+        
+        # 如果有搜索词，高亮匹配的部分
+        if search_str and search_str.lower() in path.lower():
+            # 找到所有匹配的位置
+            start_positions = []
+            lower_path = path.lower()
+            lower_search = search_str.lower()
+            pos = lower_path.find(lower_search)
+            while pos != -1:
+                start_positions.append(pos)
+                pos = lower_path.find(lower_search, pos + 1)
+            
+            # 分段显示并高亮
+            current_col = 0
+            last_pos = 0
+            for start_pos in start_positions:
+                end_pos = start_pos + len(search_str)
+                # 显示非高亮部分
+                if last_pos < start_pos:
+                    normal_part = path[last_pos:start_pos]
+                    if current_col + len(normal_part) < cols:
+                        stdscr.addstr(idx + 2, current_col, normal_part, mode_select)
+                        current_col += len(normal_part)
+                
+                # 显示高亮部分
+                highlight_part = path[start_pos:end_pos]
+                if current_col + len(highlight_part) < cols:
+                    stdscr.addstr(idx + 2, current_col, highlight_part, curses.color_pair(SEARCH_HIGHLIGHT))
+                    current_col += len(highlight_part)
+                
+                last_pos = end_pos
+            
+            # 显示剩余部分
+            if last_pos < len(path):
+                remaining_part = path[last_pos:]
+                if current_col + len(remaining_part) < cols:
+                    stdscr.addstr(idx + 2, current_col, remaining_part, mode_select)
         else:
-            json_lines = [json.dumps(json_data)]
-        return json_lines
-    except Exception as e:
-        return [str(e)]
+            # 没有搜索词时的正常显示
+            stdscr.addstr(idx + 2, 0, display_path, mode_select)
 
-
-def read_txt(path):
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            json_data = [l.split('\t')[1] for l in f.readlines()]
-        return json_data
-    except Exception as e:
-        return [str(e)]
+    # 显示页面信息和提示
+    stdscr.addstr(0, 0, f"Current directory: {current_path}\n"[:cols], curses.A_BOLD)
+    page_info = f"Page: {page + 1} / {math.ceil(len(paths) / row_per_page) if paths else 1}, Pos: {selected_file + 1}"
+    if search_str:
+        page_info += f", Found {len(paths)} / {len(original_files)} items"
+    stdscr.addstr(1, 0, page_info[:cols], curses.A_BOLD)
+    stdscr.addstr(rows - 2, 0, f"[...] Search: {search_str}"[:cols], curses.A_BOLD)
+    stdscr.addstr(rows - 1, 0, "[...] Press Ctrl+H for help information."[:cols], curses.A_BOLD)
+    # 显示key值
+    if args.debug:
+        stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
+    
+    stdscr.refresh()
+    return paths, original_files  # 返回筛选后的文件和原始文件列表
 
 
 def display_data(stdscr, path):
@@ -464,13 +551,11 @@ def display_data(stdscr, path):
             return -1
         
         selected_data = 0
-        selected_mode = 0
         start_line = 0
         search_str = ''
         jump_line_str = ''  # 用于记录输入行号
         key = ''
-        mode_list = ["SEARCH", "JUMP"]
-        mode = mode_list[selected_mode]
+        tool_selector = ToolSelector()
         show_values = True
 
         while True:
@@ -497,16 +582,25 @@ def display_data(stdscr, path):
             if args.debug:
                 stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
             # 显示搜索输入
-            stdscr.addstr(rows - 3, 0, f"[...] Type WORDs to search, ENTER to next: {search_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "SEARCH" else curses.A_BOLD)
+            stdscr.addstr(rows - 3, 0, f"[...] Search: {search_str}"[:cols], (curses.A_BOLD | curses.A_REVERSE) if tool_selector.tool == ToolType.SEARCH else curses.A_BOLD)
             # 显示行号输入
-            stdscr.addstr(rows - 2, 0, f"[...] Type NUMBERs to choose a line, ENTER to jump: {jump_line_str}"[:cols-1], (curses.A_BOLD | curses.A_REVERSE) if mode == "JUMP" else curses.A_BOLD)
+            stdscr.addstr(rows - 2, 0, f"[...] Jump: {jump_line_str}"[:cols], (curses.A_BOLD | curses.A_REVERSE) if tool_selector.tool == ToolType.JUMP else curses.A_BOLD)
             # 显示提示
-            stdscr.addstr(rows - 1, 0, f"[...] Press UP/DOWN to scroll, LEFT/RIGHT to switch data, TAB to switch mode, INSERT to conceal values, Ctrl+A to refresh, Ctrl+Z to clear cache, ESC to quit."[:cols-1], curses.A_BOLD)
+            stdscr.addstr(rows - 1, 0, f"[...] Press Ctrl+H for help information."[:cols], curses.A_BOLD)
 
             stdscr.refresh()
 
             key = stdscr.getch()
-            if key == curses.KEY_RIGHT or key == 454:
+            if key == (ord('h') & 0x1f) or key == 8:  # Ctrl+H 显示帮助
+                display_help_info(stdscr)
+            elif key == (ord('a') & 0x1f) or key == 1:  # Ctrl+A
+                break
+            elif key == (ord('z') & 0x1f) or key == 26:  # Ctrl+Z - 清除缓存
+                json_cache.clear()
+                # 重新加载当前数据以刷新显示
+                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
+                lines = full_lines if show_values else skeleton_lines
+            elif key == curses.KEY_RIGHT or key == 454:
                 selected_data = min(selected_data + 1, max(len(json_lines) - 1, 0))
                 start_line = 0
             elif key == curses.KEY_LEFT or key == 452:
@@ -525,21 +619,13 @@ def display_data(stdscr, path):
             elif key == 27:  # ESC
                 stdscr.clear()
                 return 0
-            elif key == (ord('a') & 0x1f) or key == 1:  # Ctrl+A
-                break
-            elif key == (ord('z') & 0x1f) or key == 26:  # Ctrl+Z - 清除缓存
-                json_cache.clear()
-                # 重新加载当前数据以刷新显示
-                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
-                lines = full_lines if show_values else skeleton_lines
             elif key == curses.KEY_BTAB or key == 9:
-                selected_mode = (selected_mode + 1) % len(mode_list)
-                mode = mode_list[selected_mode]
+                tool_selector.switch()
             elif key == curses.KEY_IC or key == 506:
                 show_values = not show_values
                 start_line = 0  # 重置到顶部以便立即看到变化
 
-            if mode == "SEARCH":
+            if tool_selector.tool == ToolType.SEARCH:
                 if 32 <= key <= 126:  # 所有ascii可显示字符
                     search_str += chr(key)  # 添加输入
                 elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
@@ -551,7 +637,7 @@ def display_data(stdscr, path):
                         selected_data, start_line = search_next(json_lines, selected_data, start_line, search_str, show_values, cols)
                     except:
                         pass
-            elif mode == "JUMP":
+            elif tool_selector.tool == ToolType.JUMP:
                 if 48 <= key <= 57:  # 数字键（0-9）
                     jump_line_str += chr(key)  # 添加输入
                 elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
@@ -587,7 +673,7 @@ def file_explorer(stdscr):
     # 新增：保存每个目录的原始文件列表和选中位置
     path_history = {}  # {path: {"original_files": [], "selected_index": 0}}
     
-    files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache)
+    files, original_files = display_files(stdscr, current_path, selected_file, search_str, file_cache)
     path_history[current_path] = {"original_files": original_files, "selected_index": selected_file}
 
     while True:
@@ -595,7 +681,9 @@ def file_explorer(stdscr):
         rows, cols = stdscr.getmaxyx()
 
         # 处理搜索输入
-        if 32 <= key <= 126:  # 所有ascii可显示字符
+        if key == (ord('h') & 0x1f) or key == 8:  # Ctrl+H 显示帮助
+            display_help_info(stdscr)
+        elif 32 <= key <= 126:  # 所有ascii可显示字符
             search_str += chr(key)  # 添加输入
             selected_file = 0  # 重置选中位置到第一个
         elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
@@ -659,12 +747,12 @@ def file_explorer(stdscr):
                     if new_path.endswith('.jsonl') or new_path.endswith('.json') or new_path.endswith('.txt'):
                         display_data(stdscr, new_path)
                         # 重新获取当前目录的文件列表
-                        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache, key=key)
+                        files, original_files = display_files(stdscr, current_path, selected_file, search_str, file_cache, key=key)
                         if current_path not in path_history:
                             path_history[current_path] = {"original_files": original_files, "selected_index": selected_file}
 
         # 更新显示
-        files, original_files = list_files(stdscr, current_path, selected_file, search_str, file_cache, key=key)
+        files, original_files = display_files(stdscr, current_path, selected_file, search_str, file_cache, key=key)
         
         # 更新路径历史
         if current_path not in path_history:
