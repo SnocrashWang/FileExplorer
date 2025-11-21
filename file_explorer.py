@@ -13,7 +13,6 @@ from enum import Enum
 
 SEARCH_HIGHLIGHT = 6
 KEY_HIGHLIGHT = 3
-KEY_BACKSPACE = 8
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--debug', action='store_true', help='Enable debug mode')
@@ -28,6 +27,11 @@ class Logger:
         self.writer.write(f"Line: {sys._getframe(1).f_lineno}" + '\n')
         self.writer.write(str(message) + '\n')
         self.writer.flush()
+
+    def close(self):
+        self.writer.close()
+        # 删除日志文件
+        os.remove('.file_explorer.log')
 
 if args.debug:
     log = Logger()
@@ -410,9 +414,9 @@ def display_help_info(stdscr):
         "      UP/DOWN arrows       : Scroll up/down the content",
         "      LEFT/RIGHT arrows    : View previous/next data entry",
         "      TAB                  : Switch between Search and Jump tool",
-        "      INSERT               : Switch whether to display the value of json",
+        "      SHIFT+TAB            : Switch whether to display the value of json",
         "      Ctrl+A               : Refresh current data file",
-        "      Ctrl+Z               : Clear data cache",
+        "      Ctrl+B               : Clear data cache",
         "      ESC                  : Return to File Mode",
         "    Search Tool",
         "      Type any text        : Search for the text in current data file",
@@ -527,7 +531,7 @@ def display_files(stdscr, current_path, selected_file, search_str="", file_cache
         page_info += f", Found {len(paths)} / {len(original_files)} items"
     stdscr.addstr(1, 0, page_info[:cols], curses.A_BOLD)
     stdscr.addstr(rows - 2, 0, f"[...] Search: {search_str}"[:cols], curses.A_BOLD)
-    stdscr.addstr(rows - 1, 0, "[...] Press Ctrl+H for help information."[:cols], curses.A_BOLD)
+    stdscr.addstr(rows - 1, 0, "[...] Press INSERT for help information."[:cols], curses.A_BOLD)
     # 显示key值
     if args.debug:
         stdscr.addstr(0, cols - 10, f"{key}", curses.A_BOLD)
@@ -586,16 +590,16 @@ def display_data(stdscr, path):
             # 显示行号输入
             stdscr.addstr(rows - 2, 0, f"[...] Jump: {jump_line_str}"[:cols], (curses.A_BOLD | curses.A_REVERSE) if tool_selector.tool == ToolType.JUMP else curses.A_BOLD)
             # 显示提示
-            stdscr.addstr(rows - 1, 0, f"[...] Press Ctrl+H for help information."[:cols], curses.A_BOLD)
+            stdscr.addstr(rows - 1, 0, f"[...] Press INSERT for help information."[:cols], curses.A_BOLD)
 
             stdscr.refresh()
 
             key = stdscr.getch()
-            if key == (ord('h') & 0x1f) or key == 8:  # Ctrl+H 显示帮助
+            if key == curses.KEY_IC or key == 506:  # INSERT - 显示帮助
                 display_help_info(stdscr)
-            elif key == (ord('a') & 0x1f) or key == 1:  # Ctrl+A
+            elif key == (ord('a') & 0x1f) or key == 1:  # Ctrl+A - 刷新数据
                 break
-            elif key == (ord('z') & 0x1f) or key == 26:  # Ctrl+Z - 清除缓存
+            elif key == (ord('z') & 0x1f) or key == 2:  # Ctrl+B - 清除缓存
                 json_cache.clear()
                 # 重新加载当前数据以刷新显示
                 full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
@@ -619,16 +623,16 @@ def display_data(stdscr, path):
             elif key == 27:  # ESC
                 stdscr.clear()
                 return 0
-            elif key == curses.KEY_BTAB or key == 9:
+            elif key == 9:  # TAB
                 tool_selector.switch()
-            elif key == curses.KEY_IC or key == 506:
+            elif key == curses.KEY_BTAB:
                 show_values = not show_values
                 start_line = 0  # 重置到顶部以便立即看到变化
 
             if tool_selector.tool == ToolType.SEARCH:
                 if 32 <= key <= 126:  # 所有ascii可显示字符
                     search_str += chr(key)  # 添加输入
-                elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
+                elif key == curses.KEY_BACKSPACE or key == 127:  # 处理删除
                     search_str = search_str[:-1]  # 删除最后一个字符
                 elif key == ord('\n'):  # 回车
                     try:
@@ -640,7 +644,7 @@ def display_data(stdscr, path):
             elif tool_selector.tool == ToolType.JUMP:
                 if 48 <= key <= 57:  # 数字键（0-9）
                     jump_line_str += chr(key)  # 添加输入
-                elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
+                elif key == curses.KEY_BACKSPACE or key == 127:  # 处理删除
                     jump_line_str = jump_line_str[:-1]  # 删除最后一个字符
                 elif key == ord('\n'):  # 回车
                     try:
@@ -664,6 +668,8 @@ def file_explorer(stdscr):
     curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_YELLOW) # 警告
 
     curses.curs_set(0)
+    stdscr.keypad(True)  # 启用特殊键
+
     current_path = os.getcwd()
     stdscr.encoding = 'utf-8'
     selected_file = 0
@@ -681,12 +687,12 @@ def file_explorer(stdscr):
         rows, cols = stdscr.getmaxyx()
 
         # 处理搜索输入
-        if key == (ord('h') & 0x1f) or key == 8:  # Ctrl+H 显示帮助
+        if key == curses.KEY_IC or key == 506:  # INSERT - 显示帮助
             display_help_info(stdscr)
         elif 32 <= key <= 126:  # 所有ascii可显示字符
             search_str += chr(key)  # 添加输入
             selected_file = 0  # 重置选中位置到第一个
-        elif key == curses.KEY_BACKSPACE or key == KEY_BACKSPACE:  # 处理删除
+        elif key == curses.KEY_BACKSPACE or key == 127:  # 处理删除
             if search_str:
                 # 有搜索字符串时，删除搜索字符
                 search_str = search_str[:-1]  # 删除最后一个字符
@@ -711,6 +717,8 @@ def file_explorer(stdscr):
                     selected_file = 0
                 search_str = ""  # 清除搜索
         elif key == 27:  # ESC
+            if args.debug:
+                log.close()
             exit()  # 退出程序
         elif key == curses.KEY_RIGHT or key == 454:
             selected_file = (selected_file + (rows - 3)) % len(files)
