@@ -598,6 +598,7 @@ def display_data(stdscr, path):
             if key == curses.KEY_IC or key == 506:  # INSERT - 显示帮助
                 display_help_info(stdscr)
             elif key == (ord('a') & 0x1f) or key == 1:  # Ctrl+A - 刷新数据
+                json_cache.clear()
                 break
             elif key == (ord('z') & 0x1f) or key == 2:  # Ctrl+B - 清除缓存
                 json_cache.clear()
