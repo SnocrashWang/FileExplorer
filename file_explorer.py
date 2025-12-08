@@ -66,7 +66,7 @@ class JSONDataCache:
         self.access_order: List[int] = []  # 访问顺序，用于LRU
     
     def get_lines(self, data_index: int, cols: int, json_line: str) -> Tuple[List[str], List[str]]:
-        """获取缓存的行，如果没有则计算并缓存"""
+        """获取缓存的行，如果没有则打印并缓存"""
         cache_key = data_index
         
         # 更新访问顺序
@@ -84,75 +84,13 @@ class JSONDataCache:
         if cache_key in self.full_cache and cache_key in self.skeleton_cache:
             return self.full_cache[cache_key], self.skeleton_cache[cache_key]
         
-        # 否则计算并缓存
-        full_lines, skeleton_lines = self._compute_lines(json_line, cols)
+        # 否则打印并缓存
+        full_lines, skeleton_lines = dump_json_data(json_line, cols)
         
         self.full_cache[cache_key] = full_lines
         self.skeleton_cache[cache_key] = skeleton_lines
         
         return full_lines, skeleton_lines
-    
-    def _compute_lines(self, json_line: str, cols: int) -> Tuple[List[str], List[str]]:
-        """计算JSON数据的行"""
-        try:
-            full_json_data = json.loads(json_line)
-            full_json_str = json.dumps(full_json_data, ensure_ascii=False, indent=2)
-            full_json_str = re.sub(r'(?<!\\)\\n', '\n', full_json_str)
-
-            def replace_non_dict_with_none(data):
-                """
-                递归地将字典中所有非字典的值替换为None
-                """
-                if isinstance(data, dict):
-                    for key in data:
-                        if isinstance(data[key], dict) or isinstance(data[key], list):
-                            replace_non_dict_with_none(data[key])
-                        else:
-                            data[key] = type(data[key])
-                elif isinstance(data, list):
-                    for item in data:
-                        if isinstance(item, dict) or isinstance(item, list):
-                            replace_non_dict_with_none(item)
-                        else:
-                            item = type(item)
-                return data
-
-            skeleton_json_data = replace_non_dict_with_none(full_json_data.copy())
-            skeleton_json_str = json.dumps(skeleton_json_data, cls=TypeDisplayJSONEncoder, ensure_ascii=False, indent=2)
-            skeleton_json_str = re.sub(r'(?<!\\)\\n', '\n', skeleton_json_str)
-        except json.JSONDecodeError:
-            full_json_str = "Error: Invalid JSON data."
-            skeleton_json_str = "Error: Invalid JSON data."
-        except Exception as e:
-            full_json_str = f"Error: {str(e)}"
-            skeleton_json_str = f"Error: {str(e)}"
-
-        full_lines, skeleton_lines = [], []
-        for line in full_json_str.split('\n'):
-            full_lines.extend(self.split_str(line, cols))
-        for line in skeleton_json_str.split('\n'):
-            skeleton_lines.extend(self.split_str(line, cols))
-        
-        return full_lines, skeleton_lines
-    
-    @staticmethod
-    def split_str(s, n):
-        """分割字符串，考虑中英文字符宽度"""
-        result = []
-        length = 0
-        n = int(n)
-        current_str = ''
-        for char in s:
-            char_length = 1 if ord(char) < 128 else 2  # 英文字符长度为1，中文字符长度为2
-            if length + char_length <= n:
-                current_str += char
-                length += char_length
-            else:
-                result.append(current_str)
-                current_str = char
-                length = char_length
-        result.append(current_str)
-        return result
     
     def clear(self):
         """清空缓存"""
@@ -304,7 +242,7 @@ def load_json_data(json_lines, selected_data, cols, json_cache=None):
     """使用缓存加载JSON数据"""
     if json_cache is None:
         # 如果没有缓存，回退到原始方法
-        return _load_json_data_original(json_lines, selected_data, cols)
+        return dump_json_data(json_lines[selected_data], cols)
     
     try:
         json_line = json_lines[selected_data]
@@ -316,10 +254,10 @@ def load_json_data(json_lines, selected_data, cols, json_cache=None):
         return [f"Error: {str(e)}"], [f"Error: {str(e)}"]
 
 
-def _load_json_data_original(json_lines, selected_data, cols):
-    """原始的数据加载方法（备用）"""
+def dump_json_data(json_line, cols):
+    """打印数据"""
     try:
-        full_json_data = json.loads(json_lines[selected_data])
+        full_json_data = json.loads(json_line)
         full_json_str = json.dumps(full_json_data, ensure_ascii=False, indent=2)
         full_json_str = re.sub(r'(?<!\\)\\n', '\n', full_json_str)
 
@@ -334,11 +272,11 @@ def _load_json_data_original(json_lines, selected_data, cols):
                     else:
                         data[key] = type(data[key])
             elif isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) or isinstance(item, list):
-                        replace_non_dict_with_none(item)
+                for i, _ in enumerate(data):
+                    if isinstance(data[i], dict) or isinstance(data[i], list):
+                        replace_non_dict_with_none(data[i])
                     else:
-                        item = type(item)
+                        data[i] = type(data[i])
             return data
 
         skeleton_json_data = replace_non_dict_with_none(full_json_data.copy())
