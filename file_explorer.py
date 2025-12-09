@@ -660,9 +660,9 @@ def file_explorer(stdscr):
                 log.close()
             exit()  # 退出程序
         elif key == curses.KEY_RIGHT or key == 454:
-            selected_file = (selected_file + (rows - 3)) % len(files)
+            selected_file = min((selected_file // (rows -4) + 1) % (len(files) // (rows -4) + 1) * (rows -4) + selected_file % (rows -4), len(files) -1)
         elif key == curses.KEY_LEFT or key == 452:
-            selected_file = (selected_file - (rows - 3)) % len(files)
+            selected_file = min((selected_file // (rows -4) - 1) % (len(files) // (rows -4) + 1) * (rows -4) + selected_file % (rows -4), len(files) -1)
         elif (key == curses.KEY_UP or key == 450):
             selected_file = (selected_file - 1) % len(files)
         elif (key == curses.KEY_DOWN or key == 456):
