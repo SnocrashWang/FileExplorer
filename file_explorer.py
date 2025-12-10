@@ -322,6 +322,14 @@ def search_next(json_lines, selected_data, start_line, search_str, show_values, 
     return 0, 0
 
 
+def get_key_lines(lines):
+    key_lines_list = []
+    for i, line in enumerate(lines):
+        if re.search(r'\"[^\\]*?\":', line):
+            key_lines_list.append(i)
+    return key_lines_list
+
+
 def display_help_info(stdscr):
     help_lines = [
         "File Explorer Help",
@@ -335,8 +343,8 @@ def display_help_info(stdscr):
         "    In this mode, you can browse directories and files, and open supported data files (jsonl, json, txt) for a convenient viewing.",
         "  Operation",
         "    Navigation",
-        "      UP/DOWN arrows       : Move selection up/down",
-        "      LEFT/RIGHT arrows    : Page up/down",
+        "      UP/DOWN Arrows       : Move selection up/down",
+        "      LEFT/RIGHT Arrows    : Page up/down",
         "      ENTER                : Open selected directory/file, enter Data Mode",
         "      BACKSPACE            : Go to parent directory",
         "      ESC                  : Exit the explorer",
@@ -349,12 +357,13 @@ def display_help_info(stdscr):
         "    In this mode, you can view the content of jsonl/json format data file, with varies of functionalities to help you explore the data.",
         "  Operation",
         "    Navigation",
-        "      UP/DOWN arrows       : Scroll up/down the content",
-        "      LEFT/RIGHT arrows    : View previous/next data entry",
+        "      UP/DOWN Arrows       : Scroll up/down the content",
+        "      LEFT/RIGHT Arrows    : View previous/next data entry",
+        "      PAGE UP/DOWN         : Jump to previous/next key in current data entry",
         "      TAB                  : Switch between Search and Jump tool",
         "      SHIFT+TAB            : Switch whether to display the value of json",
-        "      Ctrl+A               : Refresh current data file",
-        "      Ctrl+B               : Clear data cache",
+        "      CTRL+A               : Refresh current data file",
+        "      CTRL+B               : Clear data cache",
         "      ESC                  : Return to File Mode",
         "    Search Tool",
         "      Type any text        : Search for the text in current data file",
@@ -492,13 +501,14 @@ def display_data(stdscr, path):
         else:
             return -1
         
-        selected_data = 0
-        start_line = 0
-        search_str = ''
+        selected_data = 0   # 当前数据编号
+        start_line = 0      # 当前数据开始行号
+        key_lines = []      # 当前数据所有键的开始行号
+        search_str = ''     # 用于记录搜索字符串
         jump_line_str = ''  # 用于记录输入行号
         key = ''
         tool_selector = ToolSelector()
-        show_values = True
+        show_values = True  # 是否显示完整键值
 
         while True:
             rows, cols = stdscr.getmaxyx()
@@ -513,6 +523,7 @@ def display_data(stdscr, path):
                 for line in traceback.format_exc().split('\n'):
                     lines.extend(split_str(line, cols))
             finally:
+                key_lines = get_key_lines(lines)
                 for r, split_line in enumerate(lines[start_line:start_line+rows-5], start=2):
                     add_colored_json(stdscr, r, 0, split_line, search=search_str)
 
@@ -559,6 +570,16 @@ def display_data(stdscr, path):
                     start_line = len(lines) - (rows - 6) - 1
                 else:
                     start_line = (start_line - 1) % max(len(lines) - (rows - 6), 1)
+            elif key == curses.KEY_NPAGE or key == 457:  # Page Down
+                for kl in key_lines:
+                    if kl > start_line:
+                        start_line = kl
+                        break
+            elif key == curses.KEY_PPAGE or key == 451:  # Page Up
+                for kl in key_lines[::-1]:
+                    if kl < start_line:
+                        start_line = kl
+                        break
             elif key == 27:  # ESC
                 stdscr.clear()
                 return 0
@@ -615,7 +636,7 @@ def file_explorer(stdscr):
     search_str = ""  # 搜索字符串
     file_cache = FileCache()  # 创建文件缓存实例
     
-    # 新增：保存每个目录的原始文件列表和选中位置
+    # 保存每个目录的原始文件列表和选中位置
     path_history = {}  # {path: {"original_files": [], "selected_index": 0}}
     
     files, original_files = display_files(stdscr, current_path, selected_file, search_str, file_cache)
