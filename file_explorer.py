@@ -21,20 +21,22 @@ args = parser.parse_args()
 
 class Logger:
     def __init__(self):
-        self.writer = open('.file_explorer.log', 'w', encoding='utf-8')
+        if args.debug:
+            self.writer = open('.file_explorer.log', 'w', encoding='utf-8')
     
-    def write(self, message):
-        self.writer.write(f"Line: {sys._getframe(1).f_lineno}" + '\n')
-        self.writer.write(str(message) + '\n')
-        self.writer.flush()
+    def write(self, message=""):
+        if args.debug:
+            self.writer.write(f"Line: {sys._getframe(1).f_lineno}" + '\n')
+            self.writer.write(str(message) + '\n')
+            self.writer.flush()
 
     def close(self):
-        self.writer.close()
-        # 删除日志文件
-        os.remove('.file_explorer.log')
+        if args.debug:
+            self.writer.close()
+            # 删除日志文件
+            os.remove('.file_explorer.log')
 
-if args.debug:
-    log = Logger()
+log = Logger()
 
 
 class TypeDisplayJSONEncoder(json.JSONEncoder):
@@ -85,12 +87,12 @@ class JSONDataCache:
             return self.full_cache[cache_key], self.skeleton_cache[cache_key]
         
         # 否则打印并缓存
-        full_lines, skeleton_lines = dump_json_data(json_line, cols)
+        full_lines_with_lineno, skeleton_lines_with_lineno = dump_json_data(json_line, cols)
         
-        self.full_cache[cache_key] = full_lines
-        self.skeleton_cache[cache_key] = skeleton_lines
+        self.full_cache[cache_key] = full_lines_with_lineno
+        self.skeleton_cache[cache_key] = skeleton_lines_with_lineno
         
-        return full_lines, skeleton_lines
+        return full_lines_with_lineno, skeleton_lines_with_lineno
     
     def clear(self):
         """清空缓存"""
@@ -203,33 +205,43 @@ def split_str(s, n):
     return result
 
 
-def add_colored_json(stdscr, row, col, str, search=None):
-    def split_sub_str(pattern, item, color):
-        (s, c) = item
-        result_list = []              # 初始化结果列表
-        last_index = 0           # 记录上一个匹配的结束位置
+def add_colored_json(stdscr, row, col, lines_with_lineno, search=None):
+    def mark_sub_str(pattern, string, string_mark, color):
         # 查找所有匹配的子串
-        for match in re.finditer(pattern, s):
-            # 添加不满足条件的子串
-            if last_index < match.start():
-                non_match_part = s[last_index:match.start()]
-                result_list.append((non_match_part, c))
-            # 添加满足条件的子串
-            match_part = match.group()
-            result_list.append((match_part, color))
-            last_index = match.end()
-        # 添加最后一个不满足条件的子串（如果有）
-        if last_index < len(s):
-            non_match_part = s[last_index:]
-            result_list.append((non_match_part, c))
-        return result_list
+        for match in re.finditer(pattern, string):
+            for i in range(match.start(), match.end()):
+                string_mark[i] = color
+        return string_mark
     
-    item_list = split_sub_str(r'\"[^\\]*?\":', (str, 1), KEY_HIGHLIGHT)
+    string = ""
+    cur_lineno = lines_with_lineno[0][1] if lines_with_lineno else 0
+    for l, i in lines_with_lineno:
+        if cur_lineno != i and i != 0:
+            string += '\n'
+            cur_lineno = i
+        string += l
+
+    # 记录每个字符的颜色标记
+    string_mark = [1 for _ in string]
+    # 标记JSON键颜色
+    string_mark = mark_sub_str(r'\"[^\\\"]*?\":', string, string_mark, KEY_HIGHLIGHT)
+    # 标记搜索字颜色
     if search:
-        item_list_new = []
-        for i, item in enumerate(item_list):
-            item_list_new += split_sub_str(re.escape(search), item, SEARCH_HIGHLIGHT)
-        item_list = item_list_new
+        string_mark = mark_sub_str(re.escape(search), string, string_mark, SEARCH_HIGHLIGHT)
+
+    # 根据颜色标记分段显示
+    mark = 1
+    item_list = []
+    string_cache = ""
+    for s, m in zip(string, string_mark):
+        if m != mark:
+            item_list.append((string_cache, mark))
+            string_cache = s
+            mark = m
+        else:
+            string_cache += s
+    if string_cache:
+        item_list.append((string_cache, mark))
 
     for i, item in enumerate(item_list):
         if i == 0:
@@ -246,8 +258,8 @@ def load_json_data(json_lines, selected_data, cols, json_cache=None):
     
     try:
         json_line = json_lines[selected_data]
-        full_lines, skeleton_lines = json_cache.get_lines(selected_data, cols, json_line)
-        return full_lines, skeleton_lines
+        full_lines_with_lineno, skeleton_lines_with_lineno = json_cache.get_lines(selected_data, cols, json_line)
+        return full_lines_with_lineno, skeleton_lines_with_lineno
     except IndexError:
         return ["Error: Empty file."], ["Error: Empty file."]
     except Exception as e:
@@ -289,43 +301,54 @@ def dump_json_data(json_line, cols):
         full_json_str = "Error: Empty file."
         skeleton_json_str = "Error: Empty file."
 
-    full_lines, skeleton_lines = [], []
-    for line in full_json_str.split('\n'):
-        full_lines.extend(split_str(line, cols))
-    for line in skeleton_json_str.split('\n'):
-        skeleton_lines.extend(split_str(line, cols))
-    return full_lines, skeleton_lines
+    full_lines_with_lineno, skeleton_lines_with_lineno = [], []
+    for i, line in enumerate(full_json_str.split('\n')):
+        full_lines_with_lineno.extend([(l, i) for l in split_str(line, cols)])
+    for i, line in enumerate(skeleton_json_str.split('\n')):
+        skeleton_lines_with_lineno.extend([(l, i) for l in split_str(line, cols)])
+    return full_lines_with_lineno, skeleton_lines_with_lineno
 
 
 def search_in_list(string_list, target_string):
     if not target_string:
         return 0
-    # 遍历列表，找到目标字符串第一次出现的位置
-    for index, string in enumerate(string_list, start=1):
-        if target_string in string:
-            return index  # 返回字符串所在的位置（第几个字符串）
-    # 如果目标字符串未出现在任何字符串中
+    
+    # 遍历列表，查找可能的起始位置
+    for i in range(len(string_list)):
+        # 构建从当前位置开始的连续字符串
+        built_str = string_list[i]
+        
+        # 向后拼接，直到长度足够或到列表末尾
+        for j in range(i + 1, len(string_list)):
+            built_str += string_list[j]
+
+            # 检查当前拼接的字符串中是否包含目标字符串
+            if target_string in built_str and target_string not in string_list[j]:
+                return i + 1  # 返回起始位置（从1开始计数）
+            elif len(built_str) >= len(target_string):
+                break  # 长度已足够但仍未匹配，跳出内层循环
+    
     return -1
 
 
 def search_next(json_lines, selected_data, start_line, search_str, show_values, cols):
     while selected_data < len(json_lines):
-        full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols)
-        lines = full_lines if show_values else skeleton_lines
-        line_diff = search_in_list(lines[start_line+1:], search_str)
+        full_lines_with_lineno, skeleton_lines_with_lineno = load_json_data(json_lines, selected_data, cols)
+        lines_with_lineno = full_lines_with_lineno if show_values else skeleton_lines_with_lineno
+        line_diff = search_in_list([l for l, _ in lines_with_lineno[start_line+1:]], search_str)
         if line_diff != -1:
             next_line = start_line + line_diff
             return selected_data, next_line
 
         selected_data += 1
-        start_line = 0
+        start_line = -1
     return 0, 0
 
 
 def get_key_lines(lines):
     key_lines_list = []
     for i, line in enumerate(lines):
-        if re.search(r'\"[^\\]*?\":', line):
+        if re.search(r'\"[^\\\"]*?\":', line):
             key_lines_list.append(i)
     return key_lines_list
 
@@ -516,16 +539,16 @@ def display_data(stdscr, path):
 
             # 显示 json 内容
             try:
-                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
-                lines = full_lines if show_values else skeleton_lines
+                full_lines_with_lineno, skeleton_lines_with_lineno = load_json_data(json_lines, selected_data, cols, json_cache)
+                lines_with_lineno = full_lines_with_lineno if show_values else skeleton_lines_with_lineno
             except:
-                lines = []
-                for line in traceback.format_exc().split('\n'):
-                    lines.extend(split_str(line, cols))
+                lines_with_lineno = []
+                for i, line in enumerate(traceback.format_exc().split('\n')):
+                    lines_with_lineno.extend([(l, i) for l in split_str(line, cols)])
             finally:
+                lines = [l for l, _ in lines_with_lineno]
                 key_lines = get_key_lines(lines)
-                for r, split_line in enumerate(lines[start_line:start_line+rows-5], start=2):
-                    add_colored_json(stdscr, r, 0, split_line, search=search_str)
+                add_colored_json(stdscr, 2, 0, lines_with_lineno[start_line:start_line+rows-5], search=search_str)
 
             # 显示文件名
             stdscr.addstr(0, 0, f"JSONL file: {path[:cols-12]}", curses.A_BOLD)
@@ -551,9 +574,6 @@ def display_data(stdscr, path):
                 break
             elif key == (ord('z') & 0x1f) or key == 2:  # Ctrl+B - 清除缓存
                 json_cache.clear()
-                # 重新加载当前数据以刷新显示
-                full_lines, skeleton_lines = load_json_data(json_lines, selected_data, cols, json_cache)
-                lines = full_lines if show_values else skeleton_lines
             elif key == curses.KEY_RIGHT or key == 454:
                 selected_data = min(selected_data + 1, max(len(json_lines) - 1, 0))
                 start_line = 0
@@ -571,15 +591,21 @@ def display_data(stdscr, path):
                 else:
                     start_line = (start_line - 1) % max(len(lines) - (rows - 6), 1)
             elif key == curses.KEY_NPAGE or key == 457:  # Page Down
-                for kl in key_lines:
-                    if kl > start_line:
-                        start_line = kl
-                        break
+                if start_line >= max(key_lines):
+                    start_line = min(key_lines)
+                else:
+                    for kl in key_lines:
+                        if kl > start_line:
+                            start_line = kl
+                            break
             elif key == curses.KEY_PPAGE or key == 451:  # Page Up
-                for kl in key_lines[::-1]:
-                    if kl < start_line:
-                        start_line = kl
-                        break
+                if start_line <= min(key_lines):
+                    start_line = max(key_lines)
+                else:
+                    for kl in key_lines[::-1]:
+                        if kl < start_line:
+                            start_line = kl
+                            break
             elif key == 27:  # ESC
                 stdscr.clear()
                 return 0
@@ -677,8 +703,7 @@ def file_explorer(stdscr):
                     selected_file = 0
                 search_str = ""  # 清除搜索
         elif key == 27:  # ESC
-            if args.debug:
-                log.close()
+            log.close()
             exit()  # 退出程序
         elif key == curses.KEY_RIGHT or key == 454:
             selected_file = min((selected_file // (rows -4) + 1) % (len(files) // (rows -4) + 1) * (rows -4) + selected_file % (rows -4), len(files) -1)
