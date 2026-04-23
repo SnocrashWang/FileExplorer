@@ -11,6 +11,7 @@ import argparse
 from enum import Enum
 
 
+# curses.KEY_BACKSPACE = 8
 SEARCH_HIGHLIGHT = 6
 KEY_HIGHLIGHT = 3
 
